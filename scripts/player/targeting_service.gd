@@ -91,7 +91,11 @@ func nearest_in_front(max_distance: float) -> Combatant:
 		var offset := candidate.global_position - owner_player.global_position
 		offset.y = 0.0
 		var distance := offset.length()
-		if distance > max_distance or distance < 0.001:
+		## Measured to the target's surface, matching CombatResolver. Comparing against its
+		## origin instead means a large target standing well inside a swing's actual reach is
+		## never auto-picked, so the swing goes wherever the player happened to be facing --
+		## which on the dragon is the difference between hitting it and never touching it.
+		if distance > max_distance + candidate.hit_radius or distance < 0.001:
 			continue
 		var score := facing.dot(offset / distance)
 		if score > best_score:
@@ -118,7 +122,7 @@ func _sorted_candidates() -> Array[Combatant]:
 		return out
 	for node in get_tree().get_nodes_in_group("monsters"):
 		var candidate := node as Combatant
-		if candidate != null and not candidate.is_dead \
+		if candidate != null and owner_player.is_hostile_to(candidate) \
 				and candidate.global_position.distance_to(owner_player.global_position) <= MAX_PICK_DISTANCE:
 			out.append(candidate)
 	var origin := owner_player.global_position

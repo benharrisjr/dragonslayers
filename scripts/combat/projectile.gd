@@ -8,7 +8,8 @@ extends Node3D
 ## body because these are small, fast and numerous, and a sphere check against the handful of
 ## live combatants is both cheaper and easier to reason about than tunnelling-prone collision.
 
-## Generous enough that a fast arrow never slips past a skeleton between frames.
+## Generous enough that a fast arrow never slips past a skeleton between frames. Combined with
+## the target's own hit_radius, so this is the arrow's fatness rather than the target's size.
 const HIT_RADIUS := 0.9
 const MAX_LIFETIME := 3.0
 
@@ -24,7 +25,11 @@ var _spent: bool = false
 func launch(from: Combatant, data: AbilityData, origin: Vector3, aim: Vector3) -> void:
 	shooter = from
 	ability = data
-	global_position = origin + Vector3.UP * 1.2
+	## Launched from the shooter's mid-body and aimed at the target's, so a flat shot travels
+	## through the height everything is actually standing at. Firing from a fixed offset above
+	## the shooter's feet used to send every arrow over the top of every target.
+	var launch_height := from.hit_height * 0.5 if from != null else 0.9
+	global_position = origin + Vector3.UP * launch_height
 	var direction := aim.normalized() if aim.length_squared() > 0.001 else Vector3.FORWARD
 	_velocity = direction * data.projectile_speed
 	look_at(global_position + direction, Vector3.UP)
@@ -47,15 +52,32 @@ func _process(delta: float) -> void:
 	## damage and a four-player game would deal four times the intended hit.
 	if not NetworkManager.is_host() or shooter == null or not is_instance_valid(shooter):
 		return
+
+	## Proximity first: catches grazing shots and targets whose collider is narrower than the
+	## body it represents.
 	for candidate in CombatResolver.radius_targets(get_tree(), shooter, global_position, HIT_RADIUS):
 		_impact(candidate)
 		return
 
-	## Ground collision, so a missed shot dies on the terrain instead of sailing off the map.
+	## Then sweep the segment actually travelled this frame, so a fast arrow cannot step past a
+	## target between frames. Crucially this ray has to tell a target apart from a wall: it used
+	## to treat any hit as terrain and quietly delete the projectile, which meant every arrow
+	## and bolt died on the target's own collision capsule one frame before the proximity test
+	## would have scored it -- the Archer and Wizard could not damage anything at all.
 	var query := PhysicsRayQueryParameters3D.create(global_position - step, global_position)
 	query.exclude = [shooter.get_rid()]
-	if not get_world_3d().direct_space_state.intersect_ray(query).is_empty():
-		_finish()
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return
+	var struck := hit["collider"] as Combatant
+	if struck != null and shooter.is_hostile_to(struck):
+		## Land it where the ray actually met the body, so an explosion is centred on the impact
+		## rather than wherever the projectile happened to be at end of frame.
+		global_position = hit["position"]
+		_impact(struck)
+		return
+	## Anything else is scenery: a missed shot dies on the terrain instead of sailing off the map.
+	_finish()
 
 
 func _impact(first: Combatant) -> void:

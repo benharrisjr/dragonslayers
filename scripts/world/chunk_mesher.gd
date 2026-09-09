@@ -16,6 +16,10 @@ const STEP_HEIGHT := 0.9
 ## Sentinel height meaning "no floor here" -- the pits players fall into.
 const HOLE := -999
 
+## How far a pit's walls drop before the void cap closes it off. Deep enough that the bottom is
+## never in frame from a normal camera angle, so a pit reads as bottomless.
+const VOID_DEPTH := -8
+
 ## Side order used by both the mesher and the chunk's placement checks: +x, +z, -x, -z.
 const NEIGHBOUR_DX: Array[int] = [1, 0, -1, 0]
 const NEIGHBOUR_DZ: Array[int] = [0, 1, 0, -1]
@@ -60,7 +64,7 @@ static func build(heights: PackedInt32Array, size: int, biome: BiomeData,
 					var found := heights[nz * size + nx]
 					## A hole is bottomless: the wall drops far enough that no camera angle
 					## reveals the underside of the world.
-					neighbour_level = -8 if found == HOLE else found
+					neighbour_level = VOID_DEPTH if found == HOLE else found
 				if neighbour_level >= level:
 					continue
 				var bottom := height_to_world(neighbour_level)
@@ -70,6 +74,48 @@ static func build(heights: PackedInt32Array, size: int, biome: BiomeData,
 	surface.generate_normals()
 	var mesh := surface.commit()
 	return mesh
+
+
+## A black floor sealing the bottom of every pit.
+##
+## Deliberately built as a *separate* mesh from the terrain rather than another surface on it,
+## because the terrain mesh is what the collision shape is generated from -- a floor welded into
+## it would be something players land on, and the whole point of a pit is falling through.
+## Without it the shaft is open at the bottom and you can see the sky underneath the world.
+static func build_void_caps(heights: PackedInt32Array, size: int) -> ArrayMesh:
+	var surface := SurfaceTool.new()
+	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var found_any := false
+	var floor_y := height_to_world(VOID_DEPTH)
+
+	for z in size:
+		for x in size:
+			if heights[z * size + x] != HOLE:
+				continue
+			found_any = true
+			var origin := Vector3(x * TILE_SIZE, floor_y, z * TILE_SIZE)
+			## Wound to face upwards, so it is visible looking down into the shaft.
+			_quad(surface, Color.BLACK,
+				origin,
+				origin + Vector3(TILE_SIZE, 0, 0),
+				origin + Vector3(TILE_SIZE, 0, TILE_SIZE),
+				origin + Vector3(0, 0, TILE_SIZE))
+
+	if not found_any:
+		return null
+	surface.generate_normals()
+	return surface.commit()
+
+
+## Unshaded pure black. A lit material would catch the sun and read as a surface at the bottom
+## of the pit rather than as nothing at all.
+static func make_void_material() -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color.BLACK
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	## Visible from below too, so a player falling past it does not see through the world.
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return material
 
 
 static func make_material() -> StandardMaterial3D:

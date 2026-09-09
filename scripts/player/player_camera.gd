@@ -14,8 +14,23 @@ extends Node3D
 
 const PITCH_DEGREES := 42.0
 const DISTANCE := 14.0
+## Pulled back and flattened while fighting the dragon. At the normal follow distance a 5.6 m
+## boss fills the pane and its wind-ups happen off the top of the screen -- and a telegraph you
+## cannot see is not a telegraph.
+const BOSS_DISTANCE := 26.0
+const BOSS_PITCH_DEGREES := 30.0
+## Seconds to ease between the two framings, so stepping onto the platform is a camera move
+## rather than a cut.
+const FRAMING_BLEND := 1.6
 const HEIGHT_OFFSET := 1.6
 const TURN_SPEED := 2.4
+## Radians of camera rotation per pixel of mouse movement while the right button is held.
+const MOUSE_SENSITIVITY := 0.006
+## How far the pitch may be dragged either side of whatever the current framing wants. Bounded
+## rather than free: the fixed high angle is what makes the plateaus and their edges readable,
+## and letting the camera drop to ground level would hide the ledge you are about to be knocked
+## off. Enough range to look up at the dragon or down over a cliff.
+const PITCH_RANGE := 22.0
 ## Position follow is heavily smoothed; without it, knockback makes the camera jerk hard enough
 ## to be unpleasant in a four-way split.
 const FOLLOW_SHARPNESS := 8.0
@@ -28,6 +43,11 @@ var yaw: float = 0.0
 var camera: Camera3D
 var _input: PlayerInput
 var _smoothed_focus: Vector3
+## 0 = normal follow, 1 = boss framing. Eased rather than switched.
+var _boss_framing: float = 0.0
+## Manual pitch adjustment from a right-button drag, applied on top of whichever framing is
+## active so that dragging the view does not undo the boss pull-back.
+var pitch_offset: float = 0.0
 
 
 func setup(target: PlayerCharacter, slot: int) -> void:
@@ -37,7 +57,9 @@ func setup(target: PlayerCharacter, slot: int) -> void:
 	camera = Camera3D.new()
 	camera.name = "Camera3D"
 	camera.fov = 58.0
-	camera.far = 400.0
+	## The map is 512 m across and the summit looks over all of it, so the far plane has to clear
+	## the diagonal or the boundary cliffs are clipped away and the void shows through.
+	camera.far = 1100.0
 	## Show the world plus this slot's own marker layer, and hide the other three slots'.
 	var mask := 0xFFFFF
 	for other in range(PlayerRegistry.MAX_LOCAL_SLOTS):
@@ -59,19 +81,43 @@ func _process(delta: float) -> void:
 	## the camera" no matter which way this pane happens to be facing.
 	player.camera_yaw = yaw
 
+	var wanted_framing := 1.0 if _in_boss_arena() else 0.0
+	_boss_framing = move_toward(_boss_framing, wanted_framing, delta / FRAMING_BLEND)
+
 	var focus := player.global_position + Vector3.UP * HEIGHT_OFFSET
+	## While fighting, sit the focus between the player and the dragon so both are on screen
+	## instead of framing the player with the boss somewhere off the edge.
+	var dragon := _dragon()
+	if dragon != null and _boss_framing > 0.0:
+		focus = focus.lerp(focus.lerp(dragon.hit_centre(), 0.35), _boss_framing)
 	_smoothed_focus = _smoothed_focus.lerp(focus, 1.0 - exp(-FOLLOW_SHARPNESS * delta))
 	_apply()
+
+
+func _dragon() -> Dragon:
+	var found := get_tree().get_first_node_in_group("dragon")
+	return found as Dragon
+
+
+func _in_boss_arena() -> bool:
+	var dragon := _dragon()
+	if dragon == null or player == null or dragon.is_dead:
+		return false
+	var offset := player.global_position - dragon.arena_centre
+	offset.y = 0.0
+	return offset.length() <= dragon.arena_radius + Dragon.ENGAGE_MARGIN
 
 
 func _apply() -> void:
 	if camera == null:
 		return
-	var pitch := deg_to_rad(PITCH_DEGREES)
+	var base_pitch := lerpf(PITCH_DEGREES, BOSS_PITCH_DEGREES, _boss_framing)
+	var pitch := deg_to_rad(clampf(base_pitch + pitch_offset, 8.0, 78.0))
+	var distance := lerpf(DISTANCE, BOSS_DISTANCE, _boss_framing)
 	var offset := Vector3(
 		sin(yaw) * cos(pitch),
 		sin(pitch),
-		cos(yaw) * cos(pitch)) * DISTANCE
+		cos(yaw) * cos(pitch)) * distance
 	var wanted := _smoothed_focus + offset
 
 	## Pull in if terrain is in the way. Cliffs are everywhere and the camera sitting inside one
@@ -79,6 +125,9 @@ func _apply() -> void:
 	var space := get_world_3d().direct_space_state
 	if space != null:
 		var query := PhysicsRayQueryParameters3D.create(_smoothed_focus, wanted)
+		## Terrain only. A monster walking behind the player is not an occluder, and yanking the
+		## camera in every time one does is worse than briefly seeing through it.
+		query.collision_mask = Combatant.LAYER_WORLD
 		if player != null:
 			query.exclude = [player.get_rid()]
 		var hit := space.intersect_ray(query)
@@ -87,6 +136,15 @@ func _apply() -> void:
 
 	camera.global_position = wanted
 	camera.look_at(_smoothed_focus, Vector3.UP)
+
+
+## Free-look from a right-button drag. Horizontal movement does exactly what Q and E do, so the
+## two controls stay consistent; vertical movement tilts within PITCH_RANGE of the current
+## framing. Fed in by SplitScreen, which owns the one mouse and decides whose pane it is in.
+func apply_mouse_look(motion: Vector2) -> void:
+	yaw -= motion.x * MOUSE_SENSITIVITY
+	pitch_offset = clampf(pitch_offset + motion.y * MOUSE_SENSITIVITY * 30.0,
+			-PITCH_RANGE, PITCH_RANGE)
 
 
 ## Screen position within this pane -> a pick in the shared world. Used by click-targeting,

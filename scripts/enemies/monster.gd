@@ -22,6 +22,10 @@ const TURN_SPEED := 7.0
 
 var data: MonsterData
 var home_position: Vector3
+## The last spot this monster stood on solid ground. Loot is dropped here rather than wherever
+## the corpse ended up, because knocking things off ledges is the whole point of the combat and
+## it should not quietly cost the party the reward for winning the fight.
+var last_grounded_position: Vector3
 
 var visual: CharacterVisual
 var state: State = State.IDLE
@@ -31,6 +35,11 @@ var _attack_timer: float = 0.0
 var _state_timer: float = 0.0
 var _attack: AbilityData
 var _repath: float = 0.0
+## Staggered so 40-odd skeletons do not all run their distance check on the same frame, which
+## would turn a cheap test into a periodic spike -- exactly the stutter it is meant to remove.
+var _cull_timer: float = randf() * Culling.CHECK_INTERVAL
+var _dormant: bool = false
+var _casting_shadow: bool = true
 
 
 func configure(monster_data: MonsterData) -> void:
@@ -39,6 +48,8 @@ func configure(monster_data: MonsterData) -> void:
 	max_health = monster_data.max_health
 	health = max_health
 	knockback_resistance = monster_data.knockback_resistance
+	hit_radius = 0.45 * monster_data.scale
+	hit_height = 1.7 * monster_data.scale
 
 	visual = CharacterVisual.new()
 	visual.name = "Visual"
@@ -48,6 +59,7 @@ func configure(monster_data: MonsterData) -> void:
 
 	_attack = _build_attack()
 	home_position = global_position
+	last_grounded_position = global_position
 	damaged.connect(_on_damaged)
 	died.connect(_on_died)
 
@@ -74,12 +86,42 @@ func _build_attack() -> AbilityData:
 
 
 func _physics_process(delta: float) -> void:
+	_update_activity(delta)
+	if _dormant and _at_rest():
+		## Nobody is close enough for this monster to matter and it is not going anywhere. It
+		## keeps its position and its health and simply stops until somebody comes back.
+		##
+		## Resting is checked as well as distance because a monster shoved off a ledge can pass
+		## out of range while still in mid-air, and skipping its physics then leaves it hanging
+		## in the sky -- which is exactly what it did before this condition existed.
+		return
+
 	_tick_knockback(delta)
-	if not is_on_floor():
+	if is_on_floor():
+		last_grounded_position = global_position
+	else:
 		velocity.y -= gravity() * delta
+
+	## Shoved into a pit. Without this it falls forever: invisible, unkillable, and still on the
+	## books as a live monster. It dies where it stood instead, so the party is still paid for
+	## the kill -- knocking things off ledges is the intended way to fight, not an exploit.
+	if global_position.y < KILL_HEIGHT and not is_dead and NetworkManager.is_host():
+		global_position = last_grounded_position
+		velocity = Vector3.ZERO
+		take_damage(max_health * 2, last_grounded_position + Vector3.DOWN, 0.0, 0.0)
+		return
 
 	if is_dead:
 		_slow_to_stop(delta)
+		clamp_speed()
+		move_and_slide()
+		return
+
+	## Still falling or still being thrown, but too far away to be worth thinking about: let the
+	## physics finish playing out and skip the AI until it lands.
+	if _dormant:
+		_slow_to_stop(delta)
+		clamp_speed()
 		move_and_slide()
 		return
 
@@ -87,6 +129,7 @@ func _physics_process(delta: float) -> void:
 	## -- who to chase, when to swing -- belong to the host alone.
 	if not NetworkManager.is_host():
 		_slow_to_stop(delta)
+		clamp_speed()
 		move_and_slide()
 		return
 
@@ -111,8 +154,52 @@ func _physics_process(delta: float) -> void:
 		State.DEAD:
 			_slow_to_stop(delta)
 
+	clamp_speed()
 	move_and_slide()
 	_update_animation()
+
+
+## Decides whether this monster is worth simulating and drawing. The animation player is the
+## expensive part -- a skinned rig with 54 bone tracks costs the same whether it is on screen or
+## 200 m behind the camera -- so it is switched off first and furthest out.
+func _update_activity(delta: float) -> void:
+	_cull_timer -= delta
+	if _cull_timer > 0.0:
+		return
+	_cull_timer = Culling.CHECK_INTERVAL
+
+	var distance := Culling.distance_to_nearest_player(global_position)
+	var active := distance <= Culling.MONSTER_ACTIVE_RANGE
+	## A dying monster always finishes its animation, wherever it is: freezing a corpse mid
+	## collapse is more noticeable than any saving is worth.
+	if is_dead:
+		active = true
+
+	if active != not _dormant:
+		_dormant = not active
+		if visual != null and visual.animation_player != null:
+			visual.animation_player.active = active
+	## Assigned only on change: every write goes through to the rendering server, and 40-odd
+	## redundant writes several times a second is exactly the kind of thing that shows up as a
+	## periodic hitch rather than as a lower average.
+	var should_draw := distance <= Culling.MONSTER_VISIBLE_RANGE
+	if visible != should_draw:
+		visible = should_draw
+
+	## Shadows are the other half of what a skinned character costs, and they are the half
+	## nobody looks at once it is more than a few strides away.
+	var should_shadow := distance <= Culling.MONSTER_SHADOW_RANGE
+	if should_shadow != _casting_shadow:
+		_casting_shadow = should_shadow
+		var mode := GeometryInstance3D.SHADOW_CASTING_SETTING_ON if should_shadow \
+				else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		for mesh in Culling.meshes_under(self):
+			mesh.cast_shadow = mode
+
+
+## Settled on the ground with nothing acting on it, so nothing would change if it were skipped.
+func _at_rest() -> bool:
+	return is_on_floor() and knockback_time <= 0.0 and velocity.length_squared() < 0.04
 
 
 func _chase(delta: float) -> void:

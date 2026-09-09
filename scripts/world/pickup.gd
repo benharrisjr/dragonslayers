@@ -15,12 +15,19 @@ const LIFETIME := 90.0
 var kind: Kind = Kind.GOLD
 var amount: int = 1
 
+## Long enough to save the work, short enough that a coin never feels sticky to pick up.
+const COLLECT_INTERVAL := 0.1
+
+var _check_timer: float = 0.0
 var _base_height: float = 0.0
 var _time: float = 0.0
 var _collected: bool = false
 
 
 func setup(pickup_kind: Kind, value: int, position: Vector3) -> void:
+	## Grouped so anything that needs to find loose loot -- the playtest, and later a magnet
+	## upgrade or an end-of-round sweep -- can do so without walking the scene tree.
+	add_to_group("pickups")
 	kind = pickup_kind
 	amount = value
 	global_position = position
@@ -40,6 +47,13 @@ func _process(delta: float) -> void:
 		return
 	if not NetworkManager.is_host():
 		return
+	## Throttled rather than checked every frame. A coin is not going anywhere and neither is a
+	## player moving 7 m/s, but a screen full of loot each walking the player list every frame is
+	## a cost that shows up as a hitch after a big fight.
+	_check_timer -= delta
+	if _check_timer > 0.0:
+		return
+	_check_timer = COLLECT_INTERVAL
 	for body in PlayerRegistry.living_bodies():
 		if body.global_position.distance_to(global_position) <= COLLECT_RADIUS:
 			_collect(body)

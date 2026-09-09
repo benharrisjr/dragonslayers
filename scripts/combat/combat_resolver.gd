@@ -17,15 +17,20 @@ static func arc_targets(tree: SceneTree, attacker: Combatant, origin: Vector3,
 		return out
 	flat_facing = flat_facing.normalized()
 	var cos_limit := cos(deg_to_rad(ability.arc_degrees))
+	var attacker_height := attacker.hit_height if attacker != null else 1.7
 	for candidate: Combatant in _candidates(tree, attacker):
-		var offset := candidate.global_position - origin
-		## Vertical tolerance rather than a sphere: a monster standing on the plateau above you
-		## should not be swingable, but one on a slight rise should.
-		if absf(offset.y) > 2.2:
+		var offset := candidate.hit_centre() - (origin + Vector3.UP * attacker_height * 0.5)
+		## Vertical tolerance scaled to how tall the pair actually are: a monster on the plateau
+		## above should not be swingable, but a dragon's mid-body is metres above a player's and
+		## must still be in reach.
+		if absf(offset.y) > (attacker_height + candidate.hit_height) * 0.5 + 0.6:
 			continue
 		offset.y = 0.0
 		var distance := offset.length()
-		if distance > ability.range or distance < 0.0001:
+		## Reach is to the target's surface, not its centre. Measuring to the centre means a
+		## wide target has to be stood inside before a swing lands, which is impossible when it
+		## also has a collision capsule.
+		if distance > ability.range + candidate.hit_radius or distance < 0.0001:
 			continue
 		if flat_facing.dot(offset / distance) < cos_limit:
 			continue
@@ -38,7 +43,7 @@ static func radius_targets(tree: SceneTree, attacker: Combatant, origin: Vector3
 		radius: float) -> Array[Combatant]:
 	var out: Array[Combatant] = []
 	for candidate: Combatant in _candidates(tree, attacker):
-		if candidate.global_position.distance_to(origin) <= radius:
+		if candidate.hit_centre().distance_to(origin) <= radius + candidate.hit_radius:
 			out.append(candidate)
 	return out
 
@@ -50,7 +55,7 @@ static func ally_targets(tree: SceneTree, caster: Combatant, radius: float) -> A
 	for node in tree.get_nodes_in_group(group):
 		var ally := node as Combatant
 		if ally != null and not ally.is_dead \
-				and ally.global_position.distance_to(caster.global_position) <= radius:
+				and ally.hit_centre().distance_to(caster.hit_centre()) <= radius + ally.hit_radius:
 			out.append(ally)
 	return out
 
@@ -69,6 +74,9 @@ static func _candidates(tree: SceneTree, attacker: Combatant) -> Array:
 	var out: Array = []
 	for node in tree.get_nodes_in_group(group):
 		var candidate := node as Combatant
-		if candidate != null and not candidate.is_dead and candidate != attacker:
+		## Faction is checked as well as the group. The group is an index for speed; hostility
+		## is the actual rule, and trusting the index alone is what turned a mis-filed player
+		## into a legal target for its own friends.
+		if candidate != null and candidate != attacker and attacker.is_hostile_to(candidate):
 			out.append(candidate)
 	return out

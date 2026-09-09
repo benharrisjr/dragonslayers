@@ -12,6 +12,7 @@ const HOST_START_DELAY := 0.6
 var world: GameWorld
 var split_screen: SplitScreen
 var menu: MainMenu
+var outcome: OutcomeScreen
 
 var _pending_start: bool = false
 
@@ -53,6 +54,11 @@ func _handle_command_line() -> void:
 		check.report_delay = maxf(2.0, float(args["netcheck"]))
 		add_child(check)
 
+	if args.has("perf"):
+		var probe := PerfProbe.new()
+		probe.name = "PerfProbe"
+		add_child(probe)
+
 	if args.has("capture"):
 		var capture := DebugCapture.new()
 		capture.name = "DebugCapture"
@@ -75,7 +81,7 @@ func _handle_command_line() -> void:
 		## there to press the key. Late joiners are handled by NetworkManager anyway.
 		_pending_start = false
 		_start_match_soon(world_seed)
-	elif args.has("playtest") or args.has("solo"):
+	elif args.has("playtest") or args.has("solo") or args.has("perf"):
 		_on_start_requested("offline", "", slots, world_seed if world_seed != 0 else 4242)
 
 
@@ -150,3 +156,11 @@ func _on_match_started(world_seed: int) -> void:
 	split_screen.name = "SplitScreen"
 	add_child(split_screen)
 	split_screen.build(PlayerRegistry.local_pids())
+
+	## Added after the panes so it draws over all of them.
+	if outcome == null:
+		outcome = OutcomeScreen.new()
+		outcome.name = "OutcomeScreen"
+		add_child(outcome)
+	else:
+		move_child(outcome, get_child_count() - 1)

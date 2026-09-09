@@ -15,9 +15,6 @@ signal magic_changed(current: float, maximum: float)
 signal ability_used(index: int, ability: AbilityData)
 signal respawned
 
-## Below this height a player has fallen off the world. Set well under the lowest terrain so a
-## deep pit still reads as a pit rather than an instant respawn.
-const KILL_HEIGHT := -25.0
 ## Falling costs a heart's worth of points. Enough to make ledges frightening, not enough to
 ## make a knockback into a pit a run-ender.
 const FALL_DAMAGE := 4
@@ -65,6 +62,9 @@ func configure(player_pid: int, data: ArchetypeData) -> void:
 	max_magic = data.max_magic
 	magic = max_magic
 	knockback_resistance = data.knockback_resistance
+	## Matches the capsule the body is given in GameWorld._spawn_player.
+	hit_radius = 0.42
+	hit_height = 1.6
 	name = "Player_%d" % pid
 
 	_is_local = PlayerRegistry.peer_of(pid) == NetworkManager.local_peer_id()
@@ -118,6 +118,7 @@ func _physics_process(delta: float) -> void:
 		velocity.x = move_toward(velocity.x, 0.0, FRICTION * delta)
 		velocity.z = move_toward(velocity.z, 0.0, FRICTION * delta)
 		velocity.y -= gravity() * delta
+		clamp_speed()
 		move_and_slide()
 		return
 
@@ -186,6 +187,7 @@ func _move(delta: float) -> void:
 		velocity.z = move_toward(velocity.z, 0.0, FRICTION * delta)
 
 	velocity.y -= gravity() * delta
+	clamp_speed()
 	move_and_slide()
 
 	## Face the target while one is selected, otherwise face the way you are going. Facing the
@@ -278,8 +280,12 @@ func _aim_direction(ability: AbilityData) -> Vector3:
 		if chosen != null and ability.shape == AbilityData.Shape.PROJECTILE:
 			targeting.set_target(chosen)
 	if chosen != null:
-		var offset := chosen.global_position - global_position
-		offset.y = 0.0
+		## Projectiles keep the vertical component so they fly at the target rather than past
+		## its ankles -- which matters for anything tall, or standing on the plateau above.
+		## Melee stays flat, since the arc test flattens it anyway.
+		var offset := chosen.hit_centre() - hit_centre()
+		if ability.shape != AbilityData.Shape.PROJECTILE:
+			offset.y = 0.0
 		if offset.length_squared() > 0.001:
 			return offset.normalized()
 	return -global_transform.basis.z

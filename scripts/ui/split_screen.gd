@@ -17,6 +17,11 @@ var cameras: Array[PlayerCamera] = []
 var huds: Array[PlayerHUD] = []
 
 var _pids: Array[int] = []
+## Which pane, if any, is currently being dragged with the right mouse button. There is one
+## mouse for up to four seats, so the drag belongs to whichever pane it started in and stays
+## there until the button comes up -- otherwise sweeping the cursor across a split would hand
+## the camera to somebody else's player mid-turn.
+var _look_pane: int = -1
 
 
 func build(pids: Array[int]) -> void:
@@ -100,20 +105,80 @@ func _layout() -> void:
 ## pane the cursor is actually in -- which also makes it work unchanged in single-player.
 func _gui_input(event: InputEvent) -> void:
 	var click := event as InputEventMouseButton
-	if click == null or not click.pressed or click.button_index != MOUSE_BUTTON_LEFT:
+	if click == null or not click.pressed:
 		return
-	for index in panes.size():
-		var pane := panes[index]
-		if not Rect2(pane.position, pane.size).has_point(click.position):
-			continue
+	var index := _pane_at(click.position)
+	if index < 0:
+		return
+
+	if click.button_index == MOUSE_BUTTON_LEFT:
 		var player := PlayerRegistry.body_of(_pids[index]) as PlayerCharacter
-		if player == null:
-			continue
-		player.targeting.pick_at(cameras[index].viewport_camera(), click.position - pane.position)
+		if player != null:
+			player.targeting.pick_at(cameras[index].viewport_camera(),
+					click.position - panes[index].position)
 		return
+
+	## Right-button drag turns the camera freely -- the mouse equivalent of holding Q or E.
+	## Started here rather than in _input so that Godot's own hit-testing decides which pane the
+	## drag belongs to, in this control's coordinates, instead of rect maths against raw screen
+	## positions that still carry the viewport's transform.
+	if click.button_index == MOUSE_BUTTON_RIGHT:
+		begin_look(index)
+		accept_event()
+
+
+## The drag itself lives in _input because the pointer is captured for its duration: with the
+## cursor hidden and locked there are no more GUI positions to route by, and capturing is what
+## stops a long turn running out of screen and stalling half way round.
+func _input(event: InputEvent) -> void:
+	var button := event as InputEventMouseButton
+	if button != null and button.button_index == MOUSE_BUTTON_RIGHT and not button.pressed:
+		if is_looking():
+			end_look()
+			get_viewport().set_input_as_handled()
+		return
+
+	if not is_looking():
+		return
+	var motion := event as InputEventMouseMotion
+	if motion != null:
+		cameras[_look_pane].apply_mouse_look(motion.relative)
+		get_viewport().set_input_as_handled()
+
+
+## Hands the pointer to one pane's camera until end_look(). There is one mouse for up to four
+## seats, so the drag stays with the pane it started in -- otherwise sweeping the cursor across a
+## split would hand the camera to somebody else's player mid-turn.
+func begin_look(pane_index: int) -> void:
+	if pane_index < 0 or pane_index >= cameras.size():
+		return
+	_look_pane = pane_index
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+func end_look() -> void:
+	_look_pane = -1
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func is_looking() -> bool:
+	return _look_pane >= 0 and _look_pane < cameras.size()
+
+
+## Whichever pane contains a point in this control's coordinates, or -1.
+func _pane_at(position: Vector2) -> int:
+	for index in panes.size():
+		if Rect2(panes[index].position, panes[index].size).has_point(position):
+			return index
+	return -1
 
 
 func _clear() -> void:
+	## Never leave the pointer captured behind a rebuilt screen -- the player would be left with
+	## no cursor and no way to get it back.
+	if _look_pane >= 0:
+		_look_pane = -1
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	for child in get_children():
 		child.queue_free()
 	panes.clear()

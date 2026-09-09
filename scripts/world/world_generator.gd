@@ -8,14 +8,27 @@ extends RefCounted
 ## seed is the entire world transfer, and any hidden non-determinism would desync the game.
 
 const GRID := 4
-const CHUNK_TILES := 32
+## 64 tiles at 2 m is a 128 m chunk, so the 4x4 map is 512 m across. Doubled from 32 to give the
+## mountain room to be a mountain; everything below that is derived from it rather than being a
+## separate constant, so the chunk size stays the one number to change.
+const CHUNK_TILES := 64
 const CHUNK_SIZE := ChunkMesher.TILE_SIZE * CHUNK_TILES
 ## Border tiles pinned to level 0 on every chunk, so neighbouring chunks always meet flush
 ## without any cross-chunk generation. It also guarantees a walkable path around every chunk.
-const BORDER := 2
+const BORDER := 4
 ## Resolution of the random control grid the heightmap is interpolated from. Small values give
 ## broad plateaus; large values give noise.
-const CONTROL_POINTS := 5
+## Scaled with the chunk so terrain features stay the same size in metres. Leaving it at 5 on a
+## chunk twice as wide would make every plateau twice as big and the map read as emptier.
+const CONTROL_POINTS := 9
+
+## Radius in tiles of the flat platform at the mountain's summit. 12 tiles is 48 m across --
+## room for a 12.6 m dragon and four players to spread out and circle it, with an edge still
+## close enough that a tail sweep can put someone over it.
+const ARENA_RADIUS_TILES := 12
+## How far outside the platform the ground stays clear before the terraces resume, so the drop
+## reads as a deliberate edge rather than as noise.
+const ARENA_SKIRT_TILES := 3
 
 ## Exactly the distribution asked for: 1 Town, 3 Temple, 1 each of Desert/Lake/Forest/Mountain,
 ## 4 Plains, 4 Fields.
@@ -102,9 +115,21 @@ static func heightmap(biome: BiomeData, rng: RandomNumberGenerator) -> PackedInt
 				&"mountain":
 					## A cone, so the whole chunk is one climb ending at a summit big enough to
 					## hold a boss fight -- and with a long way to fall off it.
+					var radial := Vector2(x - centre, z - centre).length()
 					var distance := maxf(absf(x - centre), absf(z - centre)) / centre
 					var cone := (1.0 - distance) * biome.height_levels
 					level = int(round(maxf(0.0, cone) + value * 1.2))
+					if radial <= ARENA_RADIUS_TILES:
+						## A dead-flat arena. The fight is about being shoved off an edge, and
+						## an edge only reads as one if the floor leading up to it is level --
+						## on bumpy ground a knockback stops against a step instead.
+						level = biome.height_levels + 1
+					elif radial <= ARENA_RADIUS_TILES + ARENA_SKIRT_TILES:
+						## Two steps down all the way round. One step is a hop, so a single-step
+						## lip would make being knocked off the platform no setback at all;
+						## 1.8 m has to be climbed round, and anything shoved past the skirt
+						## tumbles down the terraces below.
+						level = biome.height_levels - 2
 				&"lake":
 					## Inverted: a bowl that fills with water.
 					var distance := Vector2(x - centre, z - centre).length() / centre
@@ -134,7 +159,7 @@ static func _carve_pits(heights: PackedInt32Array, size: int, biome: BiomeData,
 			if heights[z * size + x] != 0 or rng.randf() > biome.pit_chance:
 				continue
 			## Grow each pit to a small blob; single-tile holes read as bugs, not hazards.
-			var radius := rng.randi_range(1, 2)
+			var radius := rng.randi_range(2, 4)
 			for dz in range(-radius, radius + 1):
 				for dx in range(-radius, radius + 1):
 					var px := x + dx
@@ -159,6 +184,16 @@ static func _sample_control(control: Array, u: float, v: float) -> float:
 	var top: float = lerp(control[z0 * CONTROL_POINTS + x0], control[z0 * CONTROL_POINTS + x1], tx)
 	var bottom: float = lerp(control[z1 * CONTROL_POINTS + x0], control[z1 * CONTROL_POINTS + x1], tx)
 	return lerp(top, bottom, tz)
+
+
+## Centre of a chunk in world space, at ground level. The summit arena is built around this.
+static func chunk_centre(index: int) -> Vector3:
+	return chunk_origin(index) + Vector3(CHUNK_SIZE * 0.5, 0.0, CHUNK_SIZE * 0.5)
+
+
+## World-space radius of the summit platform.
+static func arena_radius() -> float:
+	return ARENA_RADIUS_TILES * ChunkMesher.TILE_SIZE
 
 
 static func chunk_origin(index: int) -> Vector3:

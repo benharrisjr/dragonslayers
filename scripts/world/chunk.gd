@@ -52,6 +52,18 @@ func _build_terrain() -> void:
 	body.add_child(shape)
 	add_child(body)
 
+	## Caps the bottom of every pit so the sky is not visible under the world. Added after the
+	## collider is built from the terrain mesh alone, so it stays scenery -- players fall through
+	## it exactly as before.
+	var caps := ChunkMesher.build_void_caps(heights, WorldGenerator.CHUNK_TILES)
+	if caps != null:
+		var void_floor := MeshInstance3D.new()
+		void_floor.name = "VoidFloor"
+		void_floor.mesh = caps
+		void_floor.material_override = ChunkMesher.make_void_material()
+		void_floor.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(void_floor)
+
 
 func _build_water() -> void:
 	var size := WorldGenerator.CHUNK_TILES * ChunkMesher.TILE_SIZE
@@ -105,6 +117,7 @@ func _scatter_props() -> void:
 		_mark_occupied(x, z)
 
 		var radius: float = prop["radius"]
+		Culling.apply_prop_range(node, radius)
 		if radius > 0.0:
 			## Trees and rocks are obstacles you can be knocked into, not scenery you walk
 			## through, so anything with a radius gets a real collider.
@@ -183,7 +196,9 @@ func _spawn_chests() -> void:
 func _on_monster_died(monster: Monster) -> void:
 	if not NetworkManager.is_host():
 		return
-	_spawn_loot(monster.global_position, monster.data.gold, monster.data.is_rare)
+	## Its last footing, not its final resting place: a skeleton shoved off a cliff still owes
+	## the party its gold, and coins spawned in mid-air over a pit are coins nobody can collect.
+	_spawn_loot(monster.last_grounded_position, monster.data.gold, monster.data.is_rare)
 
 
 func _on_chest_opened(chest: TreasureChest) -> void:
@@ -234,6 +249,11 @@ func _is_free(x: int, z: int) -> bool:
 		return false
 	if _occupied.has(Vector2i(x, z)):
 		return false
+	## Nothing stands on the boss platform. The fight is about reading a tell and moving, and a
+	## pine tree between you and the dragon is the difference between dodging a tail sweep and
+	## being pinned against it.
+	if is_arena_tile(x, z):
+		return false
 	## Refuse tiles right on a cliff edge, so props do not end up half-embedded in a drop and
 	## monsters do not spawn already falling.
 	for side in 4:
@@ -261,18 +281,10 @@ func _pick_prop(total_weight: float) -> Dictionary:
 	return biome.props[-1] if not biome.props.is_empty() else {}
 
 
-## Combatants are capsules: a box catches on every terrain step, and stepping up 0.9 m plateaus
-## is something players and monsters both need to do constantly.
+## Kept as a name the chunk and the world both call, but the setup itself lives on Combatant
+## so that players, monsters and the dragon cannot drift apart on collision layers.
 static func _add_body_shape(body: CharacterBody3D, radius: float, height: float) -> void:
-	var shape := CollisionShape3D.new()
-	var capsule := CapsuleShape3D.new()
-	capsule.radius = radius
-	capsule.height = height
-	shape.shape = capsule
-	shape.position.y = height * 0.5
-	body.add_child(shape)
-	body.floor_max_angle = deg_to_rad(50.0)
-	body.floor_snap_length = 0.6
+	Combatant.setup_body(body, radius, height)
 
 
 ## Highest solid tile centre in the chunk, used to stand the dragon on the summit and to place
@@ -290,8 +302,35 @@ func highest_tile() -> Vector3:
 	return global_position + best
 
 
+## Whether a tile falls inside the mountain's boss arena, including its skirt. Only the
+## mountain has one; every other chunk answers false and scatters as normal.
+func is_arena_tile(x: int, z: int) -> bool:
+	if biome.id != &"mountain":
+		return false
+	var half := (WorldGenerator.CHUNK_TILES - 1) * 0.5
+	return Vector2(x - half, z - half).length() \
+			<= WorldGenerator.ARENA_RADIUS_TILES + WorldGenerator.ARENA_SKIRT_TILES
+
+
+## World position of the chunk's centre tile surface. On the mountain this is the middle of the
+## flat summit platform, which is where the boss and its arena are anchored.
+func centre_tile_position() -> Vector3:
+	var half := WorldGenerator.CHUNK_TILES / 2
+	return global_position + _tile_centre(half, half)
+
+
+## Somewhere in this chunk a body can actually stand: not a pit, not a cliff edge, and nothing
+## already placed there. The occupancy check is the important one -- props carry colliders, and
+## a player dropped inside a tree is wedged in it, unable to move in any direction.
 func ground_spawn(rng: RandomNumberGenerator) -> Vector3:
 	var tiles := WorldGenerator.CHUNK_TILES
+	for _attempt in 128:
+		var x := rng.randi_range(4, tiles - 5)
+		var z := rng.randi_range(4, tiles - 5)
+		if _is_free(x, z):
+			return global_position + _tile_centre(x, z) + Vector3.UP * 1.0
+	## Falling back to merely-solid ground is still better than returning a pit, but the search
+	## above has 128 tries on a 4096-tile chunk and reaching here means something is very wrong.
 	for _attempt in 64:
 		var x := rng.randi_range(4, tiles - 5)
 		var z := rng.randi_range(4, tiles - 5)

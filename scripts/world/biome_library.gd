@@ -43,7 +43,7 @@ static func _build() -> void:
 	})
 	_add(&"plains", "Plains", Color(0.42, 0.66, 0.28), Color(0.5, 0.42, 0.3), {
 		"height_levels": 3, "roughness": 0.34, "pit_chance": 0.05, "prop_density": 0.035,
-		"monster_ids": [&"skeleton_minion", &"skeleton_rogue"], "monster_count": 7,
+		"monster_ids": [&"skeleton_minion", &"skeleton_rogue"], "monster_count": 16,
 		"chest_count": 1,
 		"props": [
 			_prop("kenney_survival-kit", "tree", 1.6, 2.4, 1.1),
@@ -54,7 +54,7 @@ static func _build() -> void:
 	})
 	_add(&"fields", "Fields", Color(0.62, 0.68, 0.26), Color(0.52, 0.44, 0.3), {
 		"height_levels": 2, "roughness": 0.22, "pit_chance": 0.02, "prop_density": 0.045,
-		"monster_ids": [&"skeleton_minion"], "monster_count": 5, "chest_count": 1,
+		"monster_ids": [&"skeleton_minion"], "monster_count": 11, "chest_count": 2,
 		"props": [
 			_prop("kenney_survival-kit", "patch-grass-large", 2.4, 2.2, 0.0),
 			_prop("kenney_fantasy-town-kit_2", "fence", 1.2, 1.5, 0.5),
@@ -64,7 +64,7 @@ static func _build() -> void:
 	})
 	_add(&"forest", "Forest", Color(0.24, 0.48, 0.24), Color(0.38, 0.32, 0.24), {
 		"height_levels": 3, "roughness": 0.4, "pit_chance": 0.05, "prop_density": 0.13,
-		"monster_ids": [&"skeleton_rogue", &"skeleton_minion"], "monster_count": 9,
+		"monster_ids": [&"skeleton_rogue", &"skeleton_minion"], "monster_count": 20,
 		"chest_count": 2,
 		"props": [
 			_prop("kenney_survival-kit", "tree-tall", 3.0, 2.6, 1.2),
@@ -76,7 +76,7 @@ static func _build() -> void:
 	})
 	_add(&"desert", "Desert", Color(0.82, 0.72, 0.42), Color(0.7, 0.56, 0.34), {
 		"height_levels": 3, "roughness": 0.3, "pit_chance": 0.09, "prop_density": 0.03,
-		"monster_ids": [&"skeleton_warrior", &"skeleton_minion"], "monster_count": 8,
+		"monster_ids": [&"skeleton_warrior", &"skeleton_minion"], "monster_count": 18,
 		"chest_count": 2,
 		"props": [
 			_prop("kenney_survival-kit", "rock-sand-a", 1.6, 2.4, 1.0),
@@ -87,7 +87,7 @@ static func _build() -> void:
 	})
 	_add(&"lake", "Lake", Color(0.46, 0.62, 0.36), Color(0.44, 0.4, 0.34), {
 		"height_levels": 2, "roughness": 0.25, "water_level": 0, "prop_density": 0.05,
-		"monster_ids": [&"skeleton_minion"], "monster_count": 5, "chest_count": 1,
+		"monster_ids": [&"skeleton_minion"], "monster_count": 11, "chest_count": 2,
 		"props": [
 			_prop("kenney_survival-kit", "tree", 1.4, 2.3, 1.1),
 			_prop("kenney_survival-kit", "rock-flat-grass", 1.6, 2.4, 0.9),
@@ -97,7 +97,7 @@ static func _build() -> void:
 	_add(&"temple", "Temple", Color(0.55, 0.53, 0.48), Color(0.48, 0.46, 0.44), {
 		"height_levels": 3, "roughness": 0.2, "pit_chance": 0.11, "prop_density": 0.07,
 		"monster_ids": [&"skeleton_warrior", &"skeleton_mage", &"skeleton_rogue"],
-		"monster_count": 9, "chest_count": 2,
+		"monster_count": 20, "chest_count": 3,
 		"props": [
 			_prop("kenney_graveyard-kit_5", "pillar-large", 1.8, 1.7, 0.9),
 			_prop("kenney_graveyard-kit_5", "pillar-small", 1.2, 1.7, 0.8),
@@ -108,8 +108,11 @@ static func _build() -> void:
 	})
 	## The mountain is a cone rather than a plateau field, and it is where the dragon waits.
 	_add(&"mountain", "Mountain", Color(0.52, 0.5, 0.46), Color(0.4, 0.38, 0.36), {
-		"height_levels": 9, "roughness": 0.5, "pit_chance": 0.0, "prop_density": 0.03,
-		"monster_ids": [&"skeleton_warrior"], "monster_count": 6, "chest_count": 1,
+		## 60 steps of 0.9 m puts the summit 54 m up. Each step is still a single hop, so the
+		## whole cone is climbable from any side -- it is a long ascent rather than a wall, and
+		## the height is what makes falling off the top a real journey back.
+		"height_levels": 60, "roughness": 0.22, "pit_chance": 0.0, "prop_density": 0.02,
+		"monster_ids": [&"skeleton_warrior"], "monster_count": 14, "chest_count": 2,
 		"props": [
 			_prop("kenney_platformer-kit-2", "tree-pine-snow", 1.2, 1.4, 1.0),
 			_prop("kenney_survival-kit", "rock-c", 2.0, 2.6, 1.0),

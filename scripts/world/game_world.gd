@@ -10,7 +10,9 @@ extends Node3D
 
 signal world_built
 
-const PLAYER_SPAWN_SPREAD := 3.0
+## Radius of the ring the party spawns in. Kept under one tile so that a spawn point cleared by
+## Chunk.ground_spawn stays clear for everyone standing around it.
+const PLAYER_SPAWN_SPREAD := 1.8
 
 var chunks: Array[Chunk] = []
 var layout: Array[StringName] = []
@@ -30,6 +32,14 @@ func build(world_seed: int) -> void:
 		chunks.append(chunk)
 
 	_place_dragon()
+
+	## Built after the chunks so it can sit flush against the outer rims, which the generator
+	## pins to level 0 on every chunk.
+	var boundary := WorldBoundary.new()
+	add_child(boundary)
+	boundary.build()
+
+	_prewarm_effects()
 
 	_players_root = Node3D.new()
 	_players_root.name = "Players"
@@ -61,14 +71,25 @@ func _place_dragon() -> void:
 	var mountain := chunk_of_biome(&"mountain")
 	if mountain == null:
 		return
+	## The centre of the flat summit platform, not merely the highest tile: the arena is carved
+	## by the generator and the whole fight -- engagement, reset, where fire lands -- is measured
+	## from its middle.
+	var centre := mountain.centre_tile_position()
 	dragon = Dragon.new()
 	add_child(dragon)
-	dragon.global_position = mountain.highest_tile() + Vector3.UP * 0.5
-	dragon.configure()
+	dragon.global_position = centre + Vector3.UP * 0.5
+	dragon.configure(centre, WorldGenerator.arena_radius())
 	## Facing the middle of the map, so it is looking at the party as they climb.
 	dragon.look_at_from_position(dragon.global_position,
 			Vector3(WorldGenerator.map_centre().x, dragon.global_position.y,
 					WorldGenerator.map_centre().z), Vector3.UP)
+	dragon.defeated.connect(_on_dragon_defeated)
+
+
+## Killing the dragon is how the game is won, so this is the one death in the game that ends
+## the match rather than dropping loot.
+func _on_dragon_defeated() -> void:
+	GameState.phase = GameState.Phase.VICTORY
 
 
 ## The party starts together in town: it is the only chunk with no monsters, and starting at the
@@ -137,6 +158,37 @@ func _add_player_sync(player: PlayerCharacter) -> void:
 	sync.set_multiplayer_authority(PlayerRegistry.peer_of(player.pid))
 
 
+## Draws one of every runtime-built effect once, out of sight, during the load.
+##
+## The first time a material reaches the screen its shader is compiled, and that compile is a
+## stall of a hundred milliseconds or more. Left to happen naturally it lands on the frame the
+## dragon first breathes fire -- a hitch precisely when the fight starts. Paying it here moves
+## it into a moment nobody is playing through.
+func _prewarm_effects() -> void:
+	var hidden := Vector3(0.0, Combatant.KILL_HEIGHT - 200.0, 0.0)
+
+	var fire := FirePatch.new()
+	add_child(fire)
+	fire.ignite(hidden, 1.0)
+
+	var bolt := MeshInstance3D.new()
+	bolt.mesh = BoxMesh.new()
+	var glow := StandardMaterial3D.new()
+	glow.albedo_color = Color.WHITE
+	glow.emission_enabled = true
+	glow.emission = Color.WHITE
+	glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	bolt.material_override = glow
+	bolt.position = hidden
+	add_child(bolt)
+
+	## One frame is enough for both to be submitted and their shaders built.
+	await get_tree().process_frame
+	await get_tree().process_frame
+	fire.queue_free()
+	bolt.queue_free()
+
+
 func _build_environment() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.name = "Sun"
@@ -146,6 +198,11 @@ func _build_environment() -> void:
 	sun.light_energy = 1.15
 	sun.light_color = Color(1.0, 0.96, 0.88)
 	sun.shadow_enabled = true
+	## Shadows only near the action. The default 100 m covers most of the visible map from a
+	## hilltop, and rendering the whole thing into the shadow atlas costs far more than the
+	## distant shadows are worth at this art scale.
+	sun.directional_shadow_max_distance = 70.0
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
 	add_child(sun)
 
 	var environment := Environment.new()
@@ -164,7 +221,9 @@ func _build_environment() -> void:
 	## camera can see a long way from the mountain.
 	environment.fog_enabled = true
 	environment.fog_light_color = Color(0.72, 0.8, 0.88)
-	environment.fog_density = 0.0016
+	## Thinned to match the larger map: at the old density the far side of a 512 m world
+	## disappeared into haze entirely, including the mountain the party is walking towards.
+	environment.fog_density = 0.0009
 
 	var world_environment := WorldEnvironment.new()
 	world_environment.name = "WorldEnvironment"

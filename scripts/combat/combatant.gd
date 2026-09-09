@@ -18,15 +18,47 @@ signal healed(amount: int)
 
 enum Faction { PLAYER, MONSTER }
 
+## Terrain, props and anything else you can stand on. Static.
+const LAYER_WORLD := 1
+## Players, monsters and the dragon. Separated from the world layer so that standing on another
+## character cannot make it a moving platform -- see setup_body().
+const LAYER_COMBATANT := 2
+
+## Nothing in this game legitimately travels faster than this. The hardest knockback in the game
+## is the dragon's tail sweep at 34 m/s, so anything past 120 is a bug, and an unclamped bug of
+## that kind launches a player into orbit and ends their run with no way back.
+const MAX_SPEED := 120.0
+
+## Below this height a body has left the world. Set well under the lowest terrain so a deep pit
+## still reads as a pit rather than as an instant respawn.
+const KILL_HEIGHT := -25.0
+
 ## Health is counted in heart *points*: three hearts of four points each. Storing points
 ## rather than hearts is what lets the HUD draw honest quarter-hearts and lets a chip-damage
 ## attack exist at all.
 const POINTS_PER_HEART := 4
 
-@export var faction: Faction = Faction.MONSTER
+## Which side this body is on. A property rather than a plain field because the group it belongs
+## to has to follow it: bodies are built by add_child()ing them and *then* configuring them, so
+## _ready() files them under the default faction and any later assignment used to leave them in
+## the wrong group forever. That silently made every player a "monster", which meant no monster
+## attack could ever find a player to hit.
+@export var faction: Faction = Faction.MONSTER:
+	set(value):
+		faction = value
+		_refresh_faction_groups()
+
 @export var max_health: int = 12
 ## Scales incoming knockback. A Knight shrugs off a shove that throws a Wizard off a cliff.
 @export var knockback_resistance: float = 1.0
+
+## How big this body is for the purposes of being hit. A combatant's origin sits at its feet,
+## so without these every attack would be aimed at the floor under the target and every hit
+## test would treat a 5.6 m dragon as a point -- which is exactly what it used to do, making
+## the dragon unhittable from outside its own collision capsule and projectiles unable to
+## connect with anything at all.
+@export var hit_radius: float = 0.5
+@export var hit_height: float = 1.7
 
 var health: int = 12
 var is_dead: bool = false
@@ -38,10 +70,58 @@ var knockback_time: float = 0.0
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 24.0)
 
 
+## Shared physics setup for every character body in the game. Kept here rather than at each
+## call site because the layer split is what stops a body that walks into another body from
+## inheriting its motion: move_and_slide treats a collider you are resting on as a moving
+## platform, and two characters overlapping then feed each other velocity every frame until one
+## of them is thrown out of the world.
+static func setup_body(body: CharacterBody3D, radius: float, height: float) -> void:
+	var shape := CollisionShape3D.new()
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = radius
+	capsule.height = height
+	shape.shape = capsule
+	shape.position.y = height * 0.5
+	body.add_child(shape)
+	## Capsules rather than boxes: characters step up 0.9 m plateaus constantly, and a box
+	## catches on every one of them.
+	body.floor_max_angle = deg_to_rad(50.0)
+	body.floor_snap_length = 0.6
+	body.collision_layer = LAYER_COMBATANT
+	body.collision_mask = LAYER_WORLD | LAYER_COMBATANT
+	## Only the static world may act as ground that carries you. It never moves, so in practice
+	## this disables platform velocity inheritance entirely.
+	body.platform_floor_layers = LAYER_WORLD
+	body.platform_wall_layers = LAYER_WORLD
+
+
+## Applied by every body each physics step, after its own movement logic has had its say.
+func clamp_speed() -> void:
+	if velocity.length() > MAX_SPEED:
+		velocity = velocity.normalized() * MAX_SPEED
+
+
 func _ready() -> void:
 	health = max_health
 	add_to_group("combatants")
-	add_to_group("players" if faction == Faction.PLAYER else "monsters")
+	_refresh_faction_groups()
+
+
+## Keeps group membership in step with `faction`. Safe to call before the node is in the tree.
+func _refresh_faction_groups() -> void:
+	if not is_inside_tree():
+		return
+	var mine := "players" if faction == Faction.PLAYER else "monsters"
+	var theirs := "monsters" if faction == Faction.PLAYER else "players"
+	if is_in_group(theirs):
+		remove_from_group(theirs)
+	if not is_in_group(mine):
+		add_to_group(mine)
+
+
+## The point attacks aim at and measure to: mid-body, not underfoot.
+func hit_centre() -> Vector3:
+	return global_position + Vector3.UP * (hit_height * 0.5)
 
 
 func is_hostile_to(other: Combatant) -> bool:

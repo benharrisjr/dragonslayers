@@ -85,12 +85,23 @@ func _build() -> void:
 	_gold_label = _make_label("0 gold", 13, Color(1.0, 0.85, 0.3))
 	root.add_child(_gold_label)
 
+	## The boss bar belongs to the world rather than to this player, so it sits centred at the
+	## top of the pane, above the target name.
+	var dragon := get_tree().get_first_node_in_group("dragon") as Dragon
+	if dragon != null:
+		var boss_bar := BossBar.new()
+		boss_bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+		boss_bar.position = Vector2(-180, 8)
+		boss_bar.custom_minimum_size = Vector2(360, 0)
+		add_child(boss_bar)
+		boss_bar.setup(dragon)
+
 	## Target name sits at the top centre of the pane rather than with the rest, because it
 	## describes something out in the world instead of something about you.
 	_target_label = _make_label("", 14, Color(1.0, 0.6, 0.55))
 	_target_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	_target_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_target_label.position = Vector2(-70, 12)
+	_target_label.position = Vector2(-70, 52)
 	_target_label.custom_minimum_size = Vector2(140, 0)
 	add_child(_target_label)
 
