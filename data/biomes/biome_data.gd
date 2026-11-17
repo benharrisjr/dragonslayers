@@ -10,14 +10,16 @@ extends Resource
 @export_group("Terrain")
 @export var ground_color: Color = Color(0.35, 0.6, 0.25)
 @export var cliff_color: Color = Color(0.42, 0.34, 0.24)
-## Number of distinct plateau levels above the base. Links-Awakening terrain reads as a few
-## crisp steps rather than a smooth slope, so this stays small.
-@export var height_levels: int = 3
-## 0 = billiard table, 1 = every tile a different height. Above ~0.5 the plateaus stop reading
-## as places you can stand and fight.
-@export var roughness: float = 0.35
-## Chance a tile at the lowest level is a hole instead -- the ledges players get knocked off.
-@export var pit_chance: float = 0.0
+## Colour of ground below the chunk's own level: wet sand and sea bed on the beach.
+@export var low_color: Color = Color(0.35, 0.6, 0.25)
+## How many levels the mesas rise above the chunk's ground: 0 for flat, at most 2. Mesas are
+## optional high ground -- without the feather nobody can step up onto one.
+@export var height_levels: int = 1
+## How much of the chunk is mesa. The terrain noise runs 0..1 and ground above this value is
+## raised, so 1.0 is a billiard table and 0.6 is roughly a third of the chunk.
+@export var mesa_threshold: float = 0.7
+## Bottomless pits in this chunk. A handful of deliberate hazards, not a texture.
+@export var pit_count: int = 0
 @export var water_level: int = -1
 
 @export_group("Props")

@@ -20,6 +20,10 @@ enum Faction { PLAYER, MONSTER }
 
 ## Terrain, props and anything else you can stand on. Static.
 const LAYER_WORLD := 1
+## Trees, rocks and the other props. Bodies collide with them exactly as with terrain, but they
+## are on a layer of their own so the camera can ignore them: a tree trunk crossing the line
+## between camera and player used to snap the view inward and back, a lurch every few steps.
+const LAYER_SCENERY := 4
 ## Players, monsters and the dragon. Separated from the world layer so that standing on another
 ## character cannot make it a moving platform -- see setup_body().
 const LAYER_COMBATANT := 2
@@ -67,6 +71,11 @@ var is_dead: bool = false
 ## Without it, a player could simply walk out of a knockback and the ledges would stop mattering.
 var knockback_time: float = 0.0
 
+## A hookshot drag in progress: where to, how fast, and how much longer to keep trying.
+var _pull_point: Vector3 = Vector3.ZERO
+var _pull_speed: float = 0.0
+var _pull_left: float = 0.0
+
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 24.0)
 
 
@@ -88,7 +97,7 @@ static func setup_body(body: CharacterBody3D, radius: float, height: float) -> v
 	body.floor_max_angle = deg_to_rad(50.0)
 	body.floor_snap_length = 0.6
 	body.collision_layer = LAYER_COMBATANT
-	body.collision_mask = LAYER_WORLD | LAYER_COMBATANT
+	body.collision_mask = LAYER_WORLD | LAYER_COMBATANT | LAYER_SCENERY
 	## Only the static world may act as ground that carries you. It never moves, so in practice
 	## this disables platform velocity inheritance entirely.
 	body.platform_floor_layers = LAYER_WORLD
@@ -119,6 +128,21 @@ func _refresh_faction_groups() -> void:
 		add_to_group(mine)
 
 
+## The way this body is looking. Every character model faces +Z and every controller turns its
+## body with `rotation.y = atan2(x, z)`, so +Z is forward -- not Godot's usual -Z.
+func facing() -> Vector3:
+	return global_transform.basis.z
+
+
+## True when the call in progress came from the host, or was made locally. The host decides
+## damage, healing and pulls for every body, including players owned by other machines, so
+## these RPCs cannot be "authority" mode: a client's player has that client as its authority,
+## and Godot would drop the host's call on the floor.
+func _sent_by_host() -> bool:
+	var sender := multiplayer.get_remote_sender_id()
+	return sender == 0 or sender == 1
+
+
 ## The point attacks aim at and measure to: mid-body, not underfoot.
 func hit_centre() -> Vector3:
 	return global_position + Vector3.UP * (hit_height * 0.5)
@@ -138,7 +162,7 @@ func take_damage(amount: int, from_position: Vector3, knockback: float,
 	if direction.length_squared() < 0.0001:
 		## Hit from exactly overhead or from inside the body: shove it the way it faces, so a
 		## zero-length vector can never swallow the knockback silently.
-		direction = -global_transform.basis.z
+		direction = facing()
 	direction = direction.normalized()
 	## `call_local` handles the networked case; offline there is no peer to rpc through, so the
 	## same function is invoked directly rather than special-casing the whole combat path.
@@ -148,10 +172,10 @@ func take_damage(amount: int, from_position: Vector3, knockback: float,
 		_net_apply_hit(amount, from_position, direction, knockback, knockback_lift)
 
 
-@rpc("authority", "call_local", "reliable")
+@rpc("any_peer", "call_local", "reliable")
 func _net_apply_hit(amount: int, from_position: Vector3, direction: Vector3,
 		knockback: float, knockback_lift: float) -> void:
-	if is_dead:
+	if is_dead or not _sent_by_host():
 		return
 	health = maxi(0, health - amount)
 	health_changed.emit(health, max_health)
@@ -171,8 +195,10 @@ func heal(amount: int) -> void:
 		_net_heal(amount)
 
 
-@rpc("authority", "call_local", "reliable")
+@rpc("any_peer", "call_local", "reliable")
 func _net_heal(amount: int) -> void:
+	if not _sent_by_host():
+		return
 	var before := health
 	health = mini(max_health, health + amount)
 	if health != before:
@@ -194,6 +220,31 @@ func apply_knockback(direction: Vector3, force: float, lift: float) -> void:
 	knockback_time = maxf(knockback_time, 0.28)
 
 
+## Host-side: drags this body towards a point, as a hookshot does. It rides on the knockback
+## machinery -- the body counts as thrown and ignores its own input until it arrives -- so a
+## monster's AI and a remote player's controller both obey it without knowing what a hookshot is.
+func pull_towards(point: Vector3, speed: float) -> void:
+	if is_dead or not NetworkManager.is_host():
+		return
+	if NetworkManager.is_networked():
+		_net_pull.rpc(point, speed)
+	else:
+		_net_pull(point, speed)
+
+
+@rpc("any_peer", "call_local", "reliable")
+func _net_pull(point: Vector3, speed: float) -> void:
+	if is_dead or not _sent_by_host():
+		return
+	var distance := global_position.distance_to(point)
+	if distance < 0.5 or speed <= 0.0:
+		return
+	_pull_point = point
+	_pull_speed = speed
+	## A little longer than the trip should take, so a body snagged on something is let go.
+	_pull_left = distance / speed + 0.25
+
+
 func set_max_health(value: int) -> void:
 	max_health = maxi(POINTS_PER_HEART, value)
 	health = mini(health, max_health)
@@ -211,6 +262,28 @@ func max_hearts() -> int:
 func _tick_knockback(delta: float) -> void:
 	if knockback_time > 0.0:
 		knockback_time = maxf(0.0, knockback_time - delta)
+	_tick_pull(delta)
+
+
+## A pull is a drag, not a shove: the velocity is rewritten every step until the body arrives.
+## A single impulse would be eaten by ground friction within a metre. Run by every body that
+## ticks its knockback, which is all of them, on whichever machine simulates it.
+func _tick_pull(delta: float) -> void:
+	if _pull_left <= 0.0:
+		return
+	_pull_left -= delta
+	var offset := _pull_point - global_position
+	offset.y = 0.0
+	if offset.length() < 0.8 or _pull_left <= 0.0 or is_dead:
+		_pull_left = 0.0
+		velocity.x *= 0.2
+		velocity.z *= 0.2
+		return
+	var along := offset.normalized()
+	velocity.x = along.x * _pull_speed
+	velocity.z = along.z * _pull_speed
+	## Counts as being thrown, so the body's own AI or controller leaves the velocity alone.
+	knockback_time = maxf(knockback_time, 0.1)
 
 
 func gravity() -> float:
@@ -227,11 +300,13 @@ func fire_projectile(ability: AbilityData, origin: Vector3, aim: Vector3) -> voi
 		_net_spawn_projectile(String(ability.id), origin, aim)
 
 
-@rpc("authority", "call_local", "reliable")
+@rpc("any_peer", "call_local", "reliable")
 func _net_spawn_projectile(ability_id: String, origin: Vector3, aim: Vector3) -> void:
+	if not _sent_by_host():
+		return
 	var ability := AbilityDB.get_ability(StringName(ability_id))
 	if ability == null:
 		return
 	var projectile := Projectile.new()
-	get_tree().current_scene.add_child(projectile)
+	GameWorld.effects_root(get_tree()).add_child(projectile)
 	projectile.launch(self, ability, origin, aim)

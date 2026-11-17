@@ -18,12 +18,19 @@ var report_delay: float = 6.0
 
 var _elapsed: float = 0.0
 var _done: bool = false
+var _prodded: bool = false
 
 
 func _process(delta: float) -> void:
 	if _done:
 		return
 	_elapsed += delta
+	## A couple of seconds before reporting, the host does to every player the things only a
+	## host may do -- a hit, and a piece of gear dropped at their feet -- so the reports show
+	## whether those reach players that another machine owns.
+	if not _prodded and _elapsed > report_delay - 2.5 and NetworkManager.is_host():
+		_prodded = true
+		_prod_players()
 	if _elapsed < report_delay:
 		return
 	_done = true
@@ -46,7 +53,7 @@ func _report() -> void:
 	## peers diverged in the heightmap, the layout alone would not show it.
 	var fingerprint := 0
 	for chunk in world.chunks:
-		fingerprint = hash([fingerprint, chunk.biome.id, chunk.heights])
+		fingerprint = hash([fingerprint, chunk.biome.id, chunk.heights, chunk.terrain.slopes])
 
 	print("%s seed=%d peers=%d players=%d monsters=%d chests=%d dragon=%s terrain=%d" % [
 		role, GameState.world_seed, PlayerRegistry.roster.size(),
@@ -57,5 +64,17 @@ func _report() -> void:
 		if body == null:
 			print("   %s player %d has no body" % [role, pid])
 			continue
-		print("   %s player %d at %s hp=%d/%d" % [role, pid,
-				body.global_position.snapped(Vector3.ONE * 0.1), body.health, body.max_health])
+		print("   %s player %d at %s hp=%d/%d gear=%s" % [role, pid,
+				body.global_position.snapped(Vector3.ONE * 0.1), body.health, body.max_health,
+				",".join(body.gear)])
+
+
+func _prod_players() -> void:
+	for pid in PlayerRegistry.all_pids():
+		var body := PlayerRegistry.body_of(pid) as PlayerCharacter
+		if body == null:
+			continue
+		body.take_damage(3, body.global_position + Vector3(0, 0, -2), 0.0, 0.0)
+		var chunk := Chunk.containing(get_tree(), body.global_position)
+		if chunk != null:
+			chunk.drop_item(ItemDB.FEATHER, body.global_position + Vector3.UP * 0.5)

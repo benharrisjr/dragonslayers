@@ -107,6 +107,7 @@ func _physics_process(delta: float) -> void:
 	## the kill -- knocking things off ledges is the intended way to fight, not an exploit.
 	if global_position.y < KILL_HEIGHT and not is_dead and NetworkManager.is_host():
 		global_position = last_grounded_position
+		reset_physics_interpolation()
 		velocity = Vector3.ZERO
 		take_damage(max_health * 2, last_grounded_position + Vector3.DOWN, 0.0, 0.0)
 		return
@@ -300,7 +301,7 @@ func _on_damaged(_amount: int, _from: Vector3) -> void:
 func _on_died() -> void:
 	_enter(State.DEAD)
 	collision_layer = 0
-	collision_mask = 1
+	collision_mask = LAYER_WORLD | LAYER_SCENERY
 	if visual != null:
 		visual.play_death(data.death_anim)
 	if NetworkManager.is_host():

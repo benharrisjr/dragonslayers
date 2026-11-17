@@ -3,8 +3,8 @@ extends StaticBody3D
 
 ## A chest. Walk up, press interact, get paid.
 ##
-## Large chests are the ability-reward track rather than the gold track; for now they simply pay
-## more, and `is_large` is the hook the ability drop system will read.
+## The large chest in each chunk is the gear chest: besides paying more, it holds one item
+## (`item_id`), which lands in front of it when it is opened.
 
 signal opened(chest: TreasureChest)
 
@@ -15,6 +15,8 @@ const INTERACT_RADIUS := 2.6
 @export var is_large: bool = false
 
 var gold_value: int = 20
+## The piece of gear inside, or &"" for a chest that only holds gold.
+var item_id: StringName = &""
 var is_open: bool = false
 
 var _lid: Node3D

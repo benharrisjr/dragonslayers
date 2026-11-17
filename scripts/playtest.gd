@@ -79,12 +79,43 @@ func _run() -> void:
 			"moved %.2f m" % player.global_position.distance_to(start))
 
 	await _settle(0.4)
+	## No feather, no jump: the button is pressed and nothing happens.
 	var ground_y := player.global_position.y
 	Input.action_press("p0_jump")
 	await _settle(0.1)
 	Input.action_release("p0_jump")
 	await _settle(0.3)
-	_check("player leaves the ground when jumping", player.global_position.y > ground_y + 0.5,
+	_check("without the feather the jump button does nothing",
+			player.global_position.y < ground_y + 0.2,
+			"%.2f -> %.2f" % [ground_y, player.global_position.y])
+
+	## The town's large chest holds a feather, a short walk from the spawn.
+	var town_chunk := world.chunk_of_biome(&"town")
+	var feather_chest: TreasureChest = town_chunk.chests[0] if town_chunk != null \
+			and not town_chunk.chests.is_empty() else null
+	_check("the town has a gear chest holding a feather",
+			feather_chest != null and feather_chest.item_id == ItemDB.FEATHER)
+	if feather_chest != null:
+		player.global_position = feather_chest.global_position + Vector3(1.2, 0.5, 0.0)
+		player.reset_physics_interpolation()
+		await _settle(0.4)
+		feather_chest.try_open(player)
+		await _settle(0.6)
+		_check("the gear chest opens", feather_chest.is_open)
+		## Walk onto what it dropped.
+		player.global_position = feather_chest.global_position + Vector3(0.0, 0.5, 1.6)
+		await _settle(0.6)
+		_check("walking over the feather picks it up", player.has_item(ItemDB.FEATHER))
+	if not player.has_item(ItemDB.FEATHER):
+		player.add_item(ItemDB.FEATHER)
+
+	await _settle(0.6)
+	ground_y = player.global_position.y
+	Input.action_press("p0_jump")
+	await _settle(0.1)
+	Input.action_release("p0_jump")
+	await _settle(0.3)
+	_check("with the feather the player jumps", player.global_position.y > ground_y + 0.5,
 			"%.2f -> %.2f" % [ground_y, player.global_position.y])
 	await _settle(1.5)
 	_check("player comes back down", player.is_on_floor())
@@ -182,7 +213,8 @@ func _run() -> void:
 	if town != null and dummy != null:
 		player.global_position = town.ground_spawn(GameState.chunk_rng(4)) + Vector3.UP * 0.5
 		await _settle(0.8)
-	for archetype_id in ArchetypeDB.ORDER:
+	## One hero is enough: they all swing the same sword.
+	for archetype_id in [ArchetypeDB.ORDER[0]]:
 		var victim := dummy
 		if victim == null:
 			continue
@@ -236,14 +268,7 @@ func _run() -> void:
 		victim.set_physics_process(true)
 		player.visual.stop_action()
 
-	# --- magic ---
-	var magic_before := player.magic
-	player.use_ability(0)
-	await _settle(0.3)
-	_check("using an ability drains magic", player.magic < magic_before,
-			"%.0f -> %.0f" % [magic_before, player.magic])
-	await _settle(PlayerCharacter.MAGIC_REGEN_DELAY + 1.5)
-	_check("magic refills after a pause", player.magic > 0.0)
+	await _check_gear(player, dummy)
 
 	# --- chests ---
 	var chest := _nearest_chest(player)
@@ -259,6 +284,7 @@ func _run() -> void:
 	await _check_mouse_look(player)
 
 	# --- the dragon fight ---
+	await _walk_the_ascent(world, player)
 	await _fight_dragon(world, player)
 
 	# --- falling off the world ---
@@ -299,6 +325,242 @@ func _run() -> void:
 ## party is wiped off the platform, and the win. Everything here is timing the unit tests cannot
 ## see -- whether an attack's damage frame actually fires, whether the reset notices an empty
 ## arena, whether killing it ends the run.
+## Boots, hookshot and what death does to gear, in a real world with real physics.
+func _check_gear(player: PlayerCharacter, dummy: Monster) -> void:
+	player.is_dead = false
+	player.health = player.max_health
+	player.visual.stop_action()
+	player.targeting.set_target(null)
+	await _settle(0.8)
+
+	# --- boots ---
+	Input.action_press("p0_dash")
+	await _settle(0.1)
+	Input.action_release("p0_dash")
+	_check("without the boots the dash button does nothing",
+			Vector2(player.velocity.x, player.velocity.z).length() < 2.0)
+	player.add_item(ItemDB.BOOTS)
+	await _settle(0.3)
+	var dash_from := player.global_position
+	Input.action_press("p0_dash")
+	await _settle(0.1)
+	Input.action_release("p0_dash")
+	await _settle(0.5)
+	var dashed := player.global_position - dash_from
+	dashed.y = 0.0
+	_check("with the boots the player dashes", dashed.length() > 2.0, "%.1f m" % dashed.length())
+
+	# --- hookshot against something that does not move ---
+	player.add_item(ItemDB.HOOKSHOT)
+	_check("the hookshot goes on a hotkey when found", player.hotkey_of(ItemDB.HOOKSHOT) >= 0)
+	var anchor := _nearest_chest(player)
+	if anchor != null:
+		var stand := _stand_off(player, anchor.global_position, 8.0)
+		_check("there is somewhere to fire the hookshot from", stand != Vector3.INF)
+		if stand != Vector3.INF:
+			player.global_position = stand + Vector3.UP * 0.2
+			player.velocity = Vector3.ZERO
+			player.reset_physics_interpolation()
+			var toward := anchor.global_position - player.global_position
+			player.rotation.y = atan2(toward.x, toward.z)
+			await _settle(0.8)
+			var gap_before := _flat_distance(player.global_position, anchor.global_position)
+			_check("the hookshot fires", player.fire_hookshot())
+			await _settle(0.15)
+			_check("a hook is in flight with a line to the player", player.hook != null)
+			await _settle(1.4)
+			var gap_after := _flat_distance(player.global_position, anchor.global_position)
+			_check("hitting something static pulls the player to it", gap_after < 3.0,
+					"%.1f m -> %.1f m" % [gap_before, gap_after])
+			_check("the hook comes back in afterwards", player.hook == null)
+
+	# --- hookshot against something that does ---
+	if dummy != null and not dummy.is_dead:
+		await _settle(1.0)
+		## On the same level as the player: a monster up on a mesa is behind a cliff face as far
+		## as a hook fired from knee height is concerned, and the hook rightly bites the cliff.
+		var spot := _clear_line_position(player, 9.0, true)
+		if spot != Vector3.INF:
+			dummy.global_position = spot
+			dummy.velocity = Vector3.ZERO
+			dummy.reset_physics_interpolation()
+			player.targeting.set_target(dummy)
+			await _settle(0.3)
+			var player_before := player.global_position
+			var monster_gap := _flat_distance(player.global_position, dummy.global_position)
+			player.fire_hookshot()
+			## Polled: the AI resumes as soon as the pull lets go, and it may walk off again.
+			var closest := monster_gap
+			var waited := 0.0
+			## How far the player moved while the pull was happening. Measured only until the
+			## monster arrives: once it is in reach it swings, and being shoved by that swing
+			## says nothing about which end of the line did the travelling.
+			var drifted := 0.0
+			while waited < 1.6:
+				await _settle(0.1)
+				waited += 0.1
+				var gap := _flat_distance(player.global_position, dummy.global_position)
+				if gap > 4.0:
+					drifted = maxf(drifted, _flat_distance(player.global_position, player_before))
+				closest = minf(closest, gap)
+			_check("hitting a monster pulls it to the player", closest < 4.0,
+					"%.1f m -> %.1f m" % [monster_gap, closest])
+			## Not "did not move at all": other skeletons live here and one may bump the tester.
+			## The point is which end of the line travelled, and the monster covered five metres.
+			_check("and the player stays put", drifted < 2.0, "moved %.1f m" % drifted)
+		player.targeting.set_target(null)
+
+	# --- lantern ---
+	await _settle(0.8)
+	player.add_item(ItemDB.LANTERN)
+	var tinder := Vector3.INF
+	var tinder_chunk: Chunk = null
+	## In town, where nothing is trying to kill the tester: a skeleton's swing mid-check would
+	## both interrupt the lantern and cost health for reasons that have nothing to do with fire.
+	var town_for_fire := (main.world as GameWorld).chunk_of_biome(&"town")
+	if town_for_fire != null and not town_for_fire.flammable_props().is_empty():
+		tinder = town_for_fire.flammable_props()[0]
+		tinder_chunk = town_for_fire
+	_check("the world has something flammable in it", tinder_chunk != null)
+	if tinder_chunk != null:
+		var standing_before := tinder_chunk.flammable_props().size()
+		player.global_position = tinder + Vector3(0.0, 0.4, -1.8)
+		player.velocity = Vector3.ZERO
+		player.reset_physics_interpolation()
+		player.rotation.y = 0.0  ## Facing +Z, towards the prop.
+		await _settle(0.6)
+		var health_before := player.health
+		_check("the lantern drops fire", player.use_lantern())
+		await _settle(0.2)
+		_check("there is fire on the ground", _fire_patches() > 0)
+		await _settle(1.4)
+		_check("the fire burns away the scenery standing in it",
+				tinder_chunk.flammable_props().size() < standing_before,
+				"%d -> %d flammable props" % [standing_before, tinder_chunk.flammable_props().size()])
+		_check("and does not burn whoever dropped it", player.health == health_before)
+
+	# --- set alight by a friend's lantern ---
+	await _settle(2.6)
+	player.visual.stop_action()
+	var calm_at := player.global_position
+	await _settle(0.5)
+	_check("a player left alone stands still",
+			_flat_distance(player.global_position, calm_at) < 0.3)
+	var alight_health := player.health
+	player.set_alight(1.5)
+	await _settle(0.1)
+	_check("a player can be set alight", player.is_alight())
+	var panic_from := player.global_position
+	var furthest := 0.0
+	var burning := 0.0
+	while burning < 1.2:
+		await _settle(0.1)
+		burning += 0.1
+		furthest = maxf(furthest, _flat_distance(player.global_position, panic_from))
+	_check("a player on fire runs about with nobody touching the controls", furthest > 1.5,
+			"%.1f m" % furthest)
+	_check("a player on fire cannot use their gear",
+			not player.dash() and not player.use_ability(-1))
+	await _settle(0.8)
+	_check("the fire goes out", not player.is_alight())
+	_check("and cost no health", player.health == alight_health)
+
+	# --- death ---
+	await _settle(0.8)
+	player.is_dead = false
+	player.health = player.max_health
+	var loose_before := _loose_items().size()
+	player.take_damage(player.max_health * 2, player.global_position + Vector3(0, 0, -2), 0.0, 0.0)
+	await _settle(0.5)
+	_check("the player can be killed", player.is_dead)
+	_check("a dead player keeps only the sword and shield",
+			player.gear == ([ItemDB.SWORD, ItemDB.SHIELD] as Array[StringName]), str(player.gear))
+	var loose := _loose_items()
+	_check("and everything else is left on the ground", loose.size() == loose_before + 4,
+			"%d items lying about, %d before" % [loose.size(), loose_before])
+	## Back on their feet a few seconds later, standing right beside what they dropped.
+	await _settle(5.0)
+	_check("the player gets back up", not player.is_dead)
+	_check("but cannot scoop their own gear straight back up",
+			not player.has_item(ItemDB.FEATHER))
+	## The rest of the playtest needs to jump.
+	for item in [ItemDB.FEATHER, ItemDB.BOOTS, ItemDB.HOOKSHOT, ItemDB.LANTERN]:
+		player.add_item(item)
+	for pickup in _loose_items():
+		pickup.queue_free()
+
+
+func _loose_items() -> Array[Pickup]:
+	var items: Array[Pickup] = []
+	for node in get_tree().get_nodes_in_group("pickups"):
+		var pickup := node as Pickup
+		if pickup != null and pickup.kind == Pickup.Kind.ITEM and not pickup.is_queued_for_deletion():
+			items.append(pickup)
+	return items
+
+
+func _flat_distance(a: Vector3, b: Vector3) -> float:
+	return Vector2(a.x - b.x, a.z - b.z).length()
+
+
+## Somewhere `distance` metres from a target that has ground under it and a clear line to it.
+func _stand_off(player: PlayerCharacter, target: Vector3, distance: float) -> Vector3:
+	var space := player.get_world_3d().direct_space_state
+	for step in 16:
+		var angle := TAU * float(step) / 16.0
+		var candidate := target + Vector3(cos(angle), 0.0, sin(angle)) * distance
+		var drop := PhysicsRayQueryParameters3D.create(
+				candidate + Vector3.UP * 4.0, candidate + Vector3.DOWN * 4.0)
+		drop.collision_mask = Combatant.LAYER_WORLD
+		var ground := space.intersect_ray(drop)
+		if ground.is_empty() or absf((ground["position"] as Vector3).y - target.y) > 0.3:
+			continue
+		var standing: Vector3 = ground["position"]
+		## The line has to reach the target itself, not a tree on the way.
+		var sight := PhysicsRayQueryParameters3D.create(
+				standing + Vector3.UP * 0.85, target + Vector3.UP * 0.4)
+		sight.collision_mask = Combatant.LAYER_WORLD
+		var seen := space.intersect_ray(sight)
+		if not seen.is_empty() and seen["collider"] is TreasureChest:
+			return standing
+	return Vector3.INF
+
+
+## The summit used to be reachable only by teleporting. This walks it: up the mountain's ramp
+## from the rim to the dragon's platform, holding one direction and never jumping.
+func _walk_the_ascent(world: GameWorld, player: PlayerCharacter) -> void:
+	var mountain := world.chunk_of_biome(&"mountain")
+	if mountain == null:
+		return
+	var foot := world.ascent_foot()
+	var inward := world.ascent_direction()
+	player.global_position = foot + Vector3.UP * 1.0
+	player.velocity = Vector3.ZERO
+	player.reset_physics_interpolation()
+	## Movement is camera-relative, so point the camera up the ramp and "up" means "climb".
+	main.split_screen.cameras[0].yaw = atan2(-inward.x, -inward.z)
+	await _settle(0.6)
+	var start_y := player.global_position.y
+	var summit_y := ChunkMesher.height_to_world(WorldGenerator.summit_level())
+	_check("the ascent starts below the summit", start_y < summit_y - 5.0,
+			"%.1f m against %.1f m" % [start_y, summit_y])
+
+	Input.action_press("p0_up")
+	var walked := 0.0
+	while walked < 10.0 and player.global_position.y < summit_y - 0.2:
+		await _settle(0.2)
+		walked += 0.2
+	Input.action_release("p0_up")
+	_check("walking up the ramp reaches the summit without a jump",
+			player.global_position.y >= summit_y - 0.2,
+			"climbed %.1f m of %.1f in %.1f s" % [
+				player.global_position.y - start_y, summit_y - start_y, walked])
+	await _settle(0.4)
+	_check("the top of the ramp is the dragon's platform", player.is_on_floor()
+			and absf(player.global_position.y - summit_y) < 0.5,
+			"y = %.2f" % player.global_position.y)
+
+
 func _fight_dragon(world: GameWorld, player: PlayerCharacter) -> void:
 	var dragon := world.dragon
 	if dragon == null:
@@ -512,7 +774,7 @@ func _parse_motion(relative: Vector2) -> void:
 
 func _fire_patches() -> int:
 	var count := 0
-	for node in get_tree().current_scene.get_children():
+	for node in GameWorld.effects_root(get_tree()).get_children():
 		if node is FirePatch:
 			count += 1
 	return count
@@ -539,7 +801,8 @@ func _settle(seconds: float) -> void:
 ## at something below a lip should hit the lip -- but it is not what this check is measuring, so
 ## the search drops each candidate onto the ground first and only then tests the line to where
 ## the target will really be standing.
-func _clear_line_position(player: PlayerCharacter, distance: float) -> Vector3:
+func _clear_line_position(player: PlayerCharacter, distance: float,
+		level_only: bool = false) -> Vector3:
 	var space := player.get_world_3d().direct_space_state
 	var from := player.hit_centre()
 	for step in 16:
@@ -554,6 +817,8 @@ func _clear_line_position(player: PlayerCharacter, distance: float) -> Vector3:
 		if ground.is_empty():
 			continue
 		var standing: Vector3 = ground["position"]
+		if level_only and absf(standing.y - player.global_position.y) > 0.3:
+			continue
 
 		var sight := PhysicsRayQueryParameters3D.create(from, standing + Vector3.UP * 0.85)
 		sight.exclude = [player.get_rid()]

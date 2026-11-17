@@ -27,6 +27,7 @@ func _ready() -> void:
 	_test_camera_look()
 	_test_combat_math()
 	_test_reach()
+	_test_gear()
 	_test_hearts()
 	_test_pid_packing()
 
@@ -80,7 +81,9 @@ func _test_archetypes() -> void:
 				archetype.model_path)
 		_check("%s model on disk" % id, ResourceLoader.exists(archetype.model_path))
 		_check("%s has a basic attack" % id, archetype.basic_attack != null)
-		_check("%s has an ability" % id, archetype.abilities.size() > 0)
+		## The heroes are looks, not classes: every one of them swings the same sword.
+		_check("%s swings the sword" % id, archetype.basic_attack != null
+				and archetype.basic_attack.id == &"sword_swing")
 		for bone: String in archetype.weapon_paths:
 			_check("%s weapon %s on disk" % [id, bone],
 					ResourceLoader.exists(archetype.weapon_paths[bone]),
@@ -136,27 +139,53 @@ func _test_dragon_model() -> void:
 
 func _test_layout() -> void:
 	print("\n--- map layout")
-	var counts_ok := true
-	var rules_ok := true
-	for world_seed in [1, 7, 4242, 99991, 123456789]:
-		var cells := WorldGenerator.layout(world_seed)
-		if cells.size() != 16:
-			counts_ok = false
+	var shape_ok := true
+	var tiers_ok := true
+	var sea_ok := true
+	var detail := ""
+	for world_seed in [1, 7, 4242, 99991, 123456789, 31, 2026, 555]:
+		var plan := WorldGenerator.plan(world_seed)
+		var cells: Array = plan["biomes"]
+		var tiers: PackedInt32Array = plan["tiers"]
+		if cells.size() != 16 or cells.count(&"mountain") != 1 or cells.count(&"town") != 1:
+			shape_ok = false
 			continue
-		var tally := {}
-		for id: StringName in cells:
-			tally[id] = tally.get(id, 0) + 1
-		for id: StringName in WorldGenerator.COUNTS:
-			if tally.get(id, 0) != WorldGenerator.COUNTS[id]:
-				counts_ok = false
-		## Mountain on an edge and town well away from it; a run that starts next to the boss
-		## has no journey in it.
 		var mountain := cells.find(&"mountain")
-		var town := cells.find(&"town")
-		if not WorldGenerator._is_edge(mountain) or WorldGenerator._chebyshev(town, mountain) < 2:
-			rules_ok = false
-	_check("16 chunks with the exact requested distribution", counts_ok)
-	_check("placement rules hold across seeds", rules_ok)
+		if not WorldGenerator._is_edge(mountain):
+			shape_ok = false
+		var sea := 0
+		for index in 16:
+			## The map steps down from the mountain: its own cell, then the ring touching it,
+			## then everything beyond -- some of which, furthest out, drops to the sea.
+			var distance := WorldGenerator._chebyshev(index, mountain)
+			var tier := tiers[index]
+			var expected := WorldGenerator.Tier.GROUND
+			if distance == 0:
+				expected = WorldGenerator.Tier.SUMMIT
+			elif distance == 1:
+				expected = WorldGenerator.Tier.HIGHLANDS
+			if tier == WorldGenerator.Tier.SEA:
+				sea += 1
+				if distance < 3 or cells[index] != &"beach" or not WorldGenerator._is_edge(index):
+					sea_ok = false
+			elif tier != expected:
+				tiers_ok = false
+				detail = "seed %d cell %d" % [world_seed, index]
+			if cells[index] == &"town" and tier != WorldGenerator.Tier.GROUND:
+				tiers_ok = false
+		if sea < 2 or sea > 4:
+			sea_ok = false
+			detail = "seed %d has %d sea chunks" % [world_seed, sea]
+	_check("16 chunks with one mountain on an edge and one town", shape_ok)
+	_check("tiers step down with distance from the mountain", tiers_ok, detail)
+	_check("two to four of the furthest chunks are beach, on the coast", sea_ok, detail)
+	_check("each tier is lower than the one inside it",
+			WorldGenerator.base_level(WorldGenerator.Tier.SEA)
+					< WorldGenerator.base_level(WorldGenerator.Tier.GROUND)
+			and WorldGenerator.base_level(WorldGenerator.Tier.GROUND)
+					< WorldGenerator.base_level(WorldGenerator.Tier.HIGHLANDS)
+			and WorldGenerator.base_level(WorldGenerator.Tier.HIGHLANDS)
+					< WorldGenerator.summit_level())
 	_check("same seed gives the same layout",
 			WorldGenerator.layout(4242) == WorldGenerator.layout(4242))
 	_check("different seeds differ",
@@ -242,7 +271,7 @@ func _test_dragon_fight() -> void:
 
 	## The arena the generator carves has to be flat, or knockback stops against a step instead
 	## of carrying someone over the edge.
-	var mountain := WorldGenerator.heightmap(BiomeLibrary.get_biome(&"mountain"), _rng(4242))
+	var mountain := WorldGenerator.heightmap(BiomeLibrary.get_biome(&"mountain"), _rng(4242)).heights
 	var tiles := WorldGenerator.CHUNK_TILES
 	var half := tiles / 2
 	var platform_level := mountain[half * tiles + half]
@@ -295,41 +324,209 @@ func _test_heightmaps() -> void:
 	var biome := BiomeLibrary.get_biome(&"plains")
 	var first := WorldGenerator.heightmap(biome, _rng(4242))
 	var second := WorldGenerator.heightmap(biome, _rng(4242))
-	_check("heightmaps are deterministic", first == second)
+	_check("heightmaps are deterministic",
+			first.heights == second.heights and first.slopes == second.slopes)
 	_check("heightmap is the right size",
-			first.size() == WorldGenerator.CHUNK_TILES * WorldGenerator.CHUNK_TILES)
+			first.heights.size() == WorldGenerator.CHUNK_TILES * WorldGenerator.CHUNK_TILES)
 
-	## Chunk rims must be flat and solid or neighbouring chunks would not meet, and the party
-	## could not walk between them.
+	## Chunk rims must sit at the chunk's own ground level or neighbouring chunks on the same
+	## tier would not meet, and the party could not walk between them.
 	var tiles := WorldGenerator.CHUNK_TILES
 	var rim_ok := true
+	var pits_ok := true
+	var pit_detail := ""
 	for id: StringName in BiomeLibrary.all_ids():
-		var heights := WorldGenerator.heightmap(BiomeLibrary.get_biome(id), _rng(77))
+		var data := BiomeLibrary.get_biome(id)
+		var terrain := WorldGenerator.heightmap(data, _rng(77))
 		for i in tiles:
 			for index in [i, (tiles - 1) * tiles + i, i * tiles, i * tiles + tiles - 1]:
-				if heights[index] != 0:
+				var x: int = index % tiles
+				var z: int = index / tiles
+				## Sides facing the open sea have nothing to meet and are allowed to fall away.
+				if WorldGenerator._rim_to_neighbour(terrain, x, z) == 0 \
+						and terrain.heights[index] != terrain.base_level:
 					rim_ok = false
-	_check("every biome's rim is level 0", rim_ok)
+		## Pits are a deliberate handful in the biomes that ask for them, and absent elsewhere.
+		var holes := 0
+		for level in terrain.heights:
+			if level == ChunkMesher.HOLE:
+				holes += 1
+		if (data.pit_count == 0 and holes > 0) or holes > data.pit_count * 25 \
+				or (data.pit_count > 0 and holes == 0):
+			pits_ok = false
+			pit_detail = "%s has %d hole tiles for %d pits" % [id, holes, data.pit_count]
+	_check("every biome's rim sits at its own ground level", rim_ok)
+	_check("pits are rare and only where a biome asks for them", pits_ok, pit_detail)
+	var pitted_biomes := 0
+	for id: StringName in BiomeLibrary.all_ids():
+		if BiomeLibrary.get_biome(id).pit_count > 0:
+			pitted_biomes += 1
+	_check("only a couple of biomes have pits at all", pitted_biomes <= 2, "%d" % pitted_biomes)
 
 	var mountain := WorldGenerator.heightmap(BiomeLibrary.get_biome(&"mountain"), _rng(5))
-	var peak := 0
-	for level in mountain:
-		peak = maxi(peak, level)
-	_check("the mountain has a summit to climb", peak >= 6, "peak level %d" % peak)
+	var peak := _peak_level(mountain.heights)
+	_check("the mountain has a summit to climb", peak == WorldGenerator.summit_level(),
+			"peak level %d" % peak)
+	## The summit used to be unreachable on foot -- the playtest teleported there. It now has to
+	## be walkable from the mountain's rim with no jump at all.
+	var half := tiles / 2
+	_check("the summit can be walked to from the mountain's rim",
+			mountain.reach[half * tiles + half] == 1)
 
-	var pitted := WorldGenerator.heightmap(BiomeLibrary.get_biome(&"temple"), _rng(11))
-	var holes := 0
-	for level in pitted:
-		if level == ChunkMesher.HOLE:
-			holes += 1
-	_check("pits get carved for players to fall into", holes > 0)
+	## Slopes. A ramp tile rises exactly one level across its length, which at 0.9 m over 2 m
+	## is about 24 degrees -- inside the 50 degree limit a body can walk.
+	var ramp_tiles := 0
+	var ramp_ok := true
+	for z in tiles:
+		for x in tiles:
+			if not mountain.is_slope(x, z):
+				continue
+			ramp_tiles += 1
+			var low := INF
+			var high := -INF
+			for which in 4:
+				low = minf(low, mountain.corner(x, z, which))
+				high = maxf(high, mountain.corner(x, z, which))
+			if not is_equal_approx(high - low, 1.0):
+				ramp_ok = false
+	_check("the mountain has an ascent ramp",
+			ramp_tiles == WorldGenerator.SUMMIT_RISE * WorldGenerator.RAMP_WIDTH, "%d tiles" % ramp_tiles)
+	_check("every ramp tile rises exactly one level", ramp_ok)
+	var slope_degrees := rad_to_deg(atan(ChunkMesher.STEP_HEIGHT / ChunkMesher.TILE_SIZE))
+	_check("ramps are shallow enough to walk", slope_degrees < 45.0, "%.0f degrees" % slope_degrees)
+
+	## A chunk next to lower ground cuts a ramp down to it.
+	var ground := WorldGenerator.base_level(WorldGenerator.Tier.GROUND)
+	var high_ground := WorldGenerator.base_level(WorldGenerator.Tier.HIGHLANDS)
+	var stepped := WorldGenerator.heightmap(BiomeLibrary.get_biome(&"forest"), _rng(21), {
+		"base": high_ground, "ascent_side": -1,
+		"sides": PackedInt32Array([ground, high_ground, TerrainData.MAP_EDGE, high_ground]),
+	})
+	var foot_reached := false
+	for lane in tiles:
+		var index := lane * tiles + tiles - 1
+		if stepped.heights[index] == ground and stepped.reach[index] == 1:
+			foot_reached = true
+	_check("a ramp runs down to a lower neighbour and can be walked", foot_reached)
+
+	## The beach: dry sand, then a shore that slopes under the water rather than stepping.
+	var beach := WorldGenerator.heightmap(BiomeLibrary.get_biome(&"beach"), _rng(8))
+	var dry := 0
+	var wet_reached := 0
+	for index in tiles * tiles:
+		if beach.heights[index] == beach.base_level:
+			dry += 1
+		elif beach.heights[index] < beach.base_level and beach.reach[index] == 1:
+			wet_reached += 1
+	_check("the beach has dry sand", dry > tiles * tiles / 5, "%d tiles" % dry)
+	_check("the sea can be waded into from the sand", wet_reached > tiles * tiles / 5,
+			"%d tiles" % wet_reached)
+	_check("the sand stands above the water line and the shallows below it",
+			ChunkMesher.height_to_world(beach.base_level) > WorldGenerator.SEA_SURFACE
+			and ChunkMesher.height_to_world(beach.base_level - 1) < WorldGenerator.SEA_SURFACE)
+
+	_test_walkable_world()
+
+
+## The promise the whole terrain rework rests on: with no feather, no hookshot and no jump, a
+## player can walk from the town to the dragon, to the beach, and into every chunk on the map.
+func _test_walkable_world() -> void:
+	var tiles := WorldGenerator.CHUNK_TILES
+	var grid := WorldGenerator.GRID
+	var failures := ""
+	var seeds := [4242, 7, 99991, 31, 2026, 8]
+	for world_seed: int in seeds:
+		var plan := WorldGenerator.plan(world_seed)
+		var tiers: PackedInt32Array = plan["tiers"]
+		var terrains: Array[TerrainData] = []
+		for index in grid * grid:
+			var rng := RandomNumberGenerator.new()
+			rng.seed = hash(world_seed) ^ (index * 2654435761)
+			terrains.append(WorldGenerator.heightmap(BiomeLibrary.get_biome(plan["biomes"][index]),
+					rng, WorldGenerator.context(tiers, index)))
+
+		## Flood across the whole map from a tile on the town's rim.
+		var town: int = plan["biomes"].find(&"town")
+		var seen := PackedByteArray()
+		seen.resize(grid * grid * tiles * tiles)
+		var start := town * tiles * tiles + _first_rim_tile(terrains[town])
+		seen[start] = 1
+		var queue: Array[int] = [start]
+		var head := 0
+		while head < queue.size():
+			var node := queue[head]
+			head += 1
+			var cell := node / (tiles * tiles)
+			var tile := node % (tiles * tiles)
+			var x := tile % tiles
+			var z := tile / tiles
+			var terrain := terrains[cell]
+			for side in 4:
+				var nx := x + ChunkMesher.NEIGHBOUR_DX[side]
+				var nz := z + ChunkMesher.NEIGHBOUR_DZ[side]
+				var next := -1
+				if terrain.in_bounds(nx, nz):
+					if terrain.can_walk(x, z, side):
+						next = cell * tiles * tiles + nz * tiles + nx
+				else:
+					## Across a chunk border: the two edges have to meet at the same height.
+					var other := WorldGenerator.neighbour_cell(cell, side)
+					if other < 0:
+						continue
+					var ox := posmod(nx, tiles)
+					var oz := posmod(nz, tiles)
+					var beyond := terrains[other]
+					if terrain.is_hole(x, z) or beyond.is_hole(ox, oz):
+						continue
+					var mine := terrain.edge(x, z, side)
+					var theirs := beyond.edge(ox, oz, (side + 2) % 4)
+					if absf(mine.x - theirs.y) < 0.01 and absf(mine.y - theirs.x) < 0.01:
+						next = other * tiles * tiles + oz * tiles + ox
+				if next >= 0 and seen[next] == 0:
+					seen[next] = 1
+					queue.append(next)
+
+		for index in grid * grid:
+			var terrain := terrains[index]
+			## Anything a chunk marks as walkable from its own rim -- which is where its large
+			## chest and any spawn point go -- is reachable from town if its rim is.
+			var rim_tile := _first_rim_tile(terrain)
+			if seen[index * tiles * tiles + rim_tile] == 0:
+				failures += " seed %d: chunk %d (%s) cannot be walked to;" % [
+					world_seed, index, plan["biomes"][index]]
+		var mountain: int = plan["biomes"].find(&"mountain")
+		var half := tiles / 2
+		if seen[mountain * tiles * tiles + half * tiles + half] == 0:
+			failures += " seed %d: the dragon's arena cannot be walked to;" % world_seed
+		var beach_found := false
+		for index in grid * grid:
+			if plan["biomes"][index] != &"beach":
+				continue
+			for tile in tiles * tiles:
+				if terrains[index].heights[tile] < terrains[index].base_level \
+						and seen[index * tiles * tiles + tile] == 1:
+					beach_found = true
+					break
+		if not beach_found:
+			failures += " seed %d: the sea cannot be walked into;" % world_seed
+	_check("town to the dragon, the sea and every chunk, on foot with no jump (%d seeds)" % seeds.size(),
+			failures.is_empty(), failures)
+
+
+## A tile on the chunk's outer ring that sits at the chunk's ground level.
+func _first_rim_tile(terrain: TerrainData) -> int:
+	for index in terrain.size * terrain.size:
+		if terrain.rim(index % terrain.size, index / terrain.size) == 0 \
+				and terrain.heights[index] == terrain.base_level and terrain.reach[index] == 1:
+			return index
+	return 0
 
 
 func _test_mesher() -> void:
 	print("\n--- mesher")
 	var biome := BiomeLibrary.get_biome(&"forest")
 	var heights := WorldGenerator.heightmap(biome, _rng(9))
-	var mesh := ChunkMesher.build(heights, WorldGenerator.CHUNK_TILES, biome, _rng(9))
+	var mesh := ChunkMesher.build(heights, biome, _rng(9))
 	_check("mesh has geometry", mesh != null and mesh.get_surface_count() == 1)
 	if mesh == null or mesh.get_surface_count() == 0:
 		return
@@ -364,14 +561,20 @@ func _test_boundary_and_voids() -> void:
 	## The whole point of the ring: no step in it may be climbable, or the party walks out of
 	## the world.
 	var jump_apex := (11.4 * 11.4) / (2.0 * 24.0)  ## The Archer jumps highest.
-	## Every terrace, not just the first: they grow outward, so the shortest one is the test.
+	## Every terrace beyond the inner wall: they grow outward, so the shortest one is the test.
 	var shortest := INF
-	for step in WorldBoundary.STEPS:
+	for step in range(1, WorldBoundary.STEPS):
 		shortest = minf(shortest, WorldBoundary.rise_of(step))
+	## The inner wall stands against edge chunks at every tier, so it has to clear the tallest.
+	var tallest_edge := ChunkMesher.height_to_world(
+			WorldGenerator.base_level(WorldGenerator.Tier.HIGHLANDS) + 2)
+	_check("the inner wall out-tops the highest ground on the map's edge",
+			WorldBoundary.INNER_WALL_TOP > tallest_edge + jump_apex + 0.5,
+			"wall %.1f m, edge %.1f m" % [WorldBoundary.INNER_WALL_TOP, tallest_edge])
 	_check("no boundary step can be jumped", shortest > jump_apex + 0.5,
 			"shortest step %.1f m, best jump %.2f m" % [shortest, jump_apex])
 	## And it has to out-top the mountain, or the summit looks straight over it into nothing.
-	var summit := ChunkMesher.height_to_world(BiomeLibrary.get_biome(&"mountain").height_levels)
+	var summit := ChunkMesher.height_to_world(WorldGenerator.summit_level())
 	_check("the ring stands taller than the mountain", WorldBoundary.height() > summit + 10.0,
 			"ring %.0f m, summit %.0f m" % [WorldBoundary.height(), summit])
 
@@ -393,7 +596,7 @@ func _test_boundary_and_voids() -> void:
 
 	## Void caps. A pitted biome must produce them; a flat one must not waste a mesh on nothing.
 	var pitted := WorldGenerator.heightmap(BiomeLibrary.get_biome(&"temple"), _rng(11))
-	var caps := ChunkMesher.build_void_caps(pitted, WorldGenerator.CHUNK_TILES)
+	var caps := ChunkMesher.build_void_caps(pitted.heights, WorldGenerator.CHUNK_TILES)
 	_check("pits get a floor", caps != null)
 	if caps != null:
 		var cap_box := caps.get_aabb()
@@ -405,7 +608,7 @@ func _test_boundary_and_voids() -> void:
 		_check("the floor is below all playable ground",
 				cap_box.end.y < 0.01, "%.2f m" % cap_box.end.y)
 
-	var town := WorldGenerator.heightmap(BiomeLibrary.get_biome(&"town"), _rng(3))
+	var town := WorldGenerator.heightmap(BiomeLibrary.get_biome(&"town"), _rng(3)).heights
 	_check("a chunk with no pits gets no floor",
 			ChunkMesher.build_void_caps(town, WorldGenerator.CHUNK_TILES) == null)
 
@@ -413,8 +616,7 @@ func _test_boundary_and_voids() -> void:
 	## generated from -- a floor welded in turns every pit into something you land on, and the
 	## whole knockback-off-a-ledge design stops working. The pit *walls* do legitimately reach
 	## that depth, so the test looks for an upward-facing surface rather than for the depth.
-	var terrain := ChunkMesher.build(pitted, WorldGenerator.CHUNK_TILES,
-			BiomeLibrary.get_biome(&"temple"), _rng(11))
+	var terrain := ChunkMesher.build(pitted, BiomeLibrary.get_biome(&"temple"), _rng(11))
 	var arrays := terrain.surface_get_arrays(0)
 	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
@@ -581,7 +783,11 @@ func _test_combat_math() -> void:
 	_check("characters and terrain are on different layers",
 			Combatant.LAYER_COMBATANT != Combatant.LAYER_WORLD)
 	_check("a character collides with terrain and other characters",
-			body.collision_mask == (Combatant.LAYER_WORLD | Combatant.LAYER_COMBATANT))
+			body.collision_mask == (Combatant.LAYER_WORLD | Combatant.LAYER_COMBATANT
+					| Combatant.LAYER_SCENERY))
+	_check("scenery is on its own layer, so the camera can ignore it",
+			Combatant.LAYER_SCENERY != Combatant.LAYER_WORLD
+			and Combatant.LAYER_SCENERY != Combatant.LAYER_COMBATANT)
 	_check("only static ground can carry a character",
 			body.platform_floor_layers == Combatant.LAYER_WORLD)
 
@@ -597,10 +803,7 @@ func _test_combat_math() -> void:
 	body.queue_free()
 
 	_check("every ability declares knockback or heals", _all_abilities_shove())
-	var bash := AbilityDB.get_ability(&"shield_bash")
-	_check("shield bash costs magic", bash.magic_cost > 0.0)
-	_check("basic attacks are free", ArchetypeDB.get_archetype(&"knight").basic_attack.magic_cost == 0.0)
-	_check("a drained player can still swing", bash.can_afford(0.0) == false
+	_check("the sword is free to swing", ArchetypeDB.get_archetype(&"knight").basic_attack.magic_cost == 0.0
 			and ArchetypeDB.get_archetype(&"knight").basic_attack.can_afford(0.0))
 
 	victim.queue_free()
@@ -653,7 +856,7 @@ func _test_reach() -> void:
 	dragon.hit_height = 5.0
 	add_child(dragon)
 
-	var swing := AbilityDB.get_ability(&"knight_swing")
+	var swing := AbilityDB.get_ability(&"sword_swing")
 	var forward := Vector3(0, 0, -1)
 
 	skeleton.global_position = Vector3(0, 0, -2.5)
@@ -739,6 +942,151 @@ func _test_pid_packing() -> void:
 
 
 # --- helpers ----------------------------------------------------------------------------------
+
+# --- gear ------------------------------------------------------------------------------------
+
+func _test_gear() -> void:
+	print("\n--- gear")
+	var pid := PlayerRegistry.make_pid(1, 0)
+	PlayerRegistry.add_entry(pid, &"knight")
+	var hero := PlayerCharacter.new()
+	Combatant.setup_body(hero, 0.42, 1.6)
+	add_child(hero)
+	hero.configure(pid, ArchetypeDB.get_archetype(&"knight"))
+
+	_check("everyone starts with a sword and a shield",
+			hero.gear == ([ItemDB.SWORD, ItemDB.SHIELD] as Array[StringName]))
+	_check("and has them on the first two hotkeys",
+			hero.hotkeys[0] == ItemDB.SWORD and hero.hotkeys[1] == ItemDB.SHIELD
+			and hero.hotkeys[2] == &"")
+	_check("no feather to begin with, so no jump", not hero.has_item(ItemDB.FEATHER))
+
+	_check("a found item is taken", hero.add_item(ItemDB.HOOKSHOT))
+	_check("and goes straight onto the free hotkey", hero.hotkeys[2] == ItemDB.HOOKSHOT)
+	_check("a second one is left on the ground", not hero.add_item(ItemDB.HOOKSHOT))
+	hero.add_item(ItemDB.FEATHER)
+	hero.add_item(ItemDB.BOOTS)
+	_check("passive gear takes no hotkey",
+			not hero.hotkeys.has(ItemDB.FEATHER) and not hero.hotkeys.has(ItemDB.BOOTS))
+	_check("passive gear cannot be put on one", not hero.assign_hotkey(0, ItemDB.FEATHER))
+
+	## Assigning swaps rather than duplicating or dropping.
+	hero.assign_hotkey(0, ItemDB.HOOKSHOT)
+	_check("assigning an item swaps it with what was on the button",
+			hero.hotkeys[0] == ItemDB.HOOKSHOT and hero.hotkeys[2] == ItemDB.SWORD
+			and hero.hotkeys[1] == ItemDB.SHIELD, str(hero.hotkeys))
+	_check("an item nobody holds cannot be assigned", not hero.assign_hotkey(1, &"nonsense"))
+
+	## The shield. Every character faces +Z at rest.
+	var front := hero.global_position + Vector3(0, 0, 3)
+	var behind := hero.global_position + Vector3(0, 0, -3)
+	_check("the shield covers the front", hero.blocks_from(front))
+	_check("and not the back", not hero.blocks_from(behind))
+	hero.blocking = true
+	var before := hero.health
+	hero.take_damage(3, front, 9.0, 0.3)
+	_check("a blocked hit does no damage", hero.health == before, "%d -> %d" % [before, hero.health])
+	_check("a blocked hit shoves a third as hard",
+			Vector2(hero.velocity.x, hero.velocity.z).length()
+					< 9.0 * hero.knockback_resistance * 0.5,
+			"%.1f m/s" % Vector2(hero.velocity.x, hero.velocity.z).length())
+	hero.take_damage(3, behind, 9.0, 0.3)
+	_check("a hit from behind gets past the shield", hero.health == before - 3)
+	hero.blocking = false
+	hero.take_damage(3, front, 9.0, 0.3)
+	_check("a lowered shield blocks nothing", hero.health == before - 6)
+
+	## Death: everything but the sword and shield.
+	var dropped := hero._strip_droppable_gear()
+	_check("dying drops the hookshot, feather and boots",
+			dropped.size() == 3 and dropped.has(ItemDB.HOOKSHOT) and dropped.has(ItemDB.FEATHER)
+			and dropped.has(ItemDB.BOOTS), str(dropped))
+	_check("and keeps the sword and shield",
+			hero.gear == ([ItemDB.SWORD, ItemDB.SHIELD] as Array[StringName]))
+	_check("a dropped item comes off its hotkey", not hero.hotkeys.has(ItemDB.HOOKSHOT))
+
+	## Pickups.
+	var feather := Pickup.new()
+	add_child(feather)
+	feather.setup(Pickup.Kind.ITEM, ItemDB.ORDER.find(ItemDB.FEATHER), Vector3(50, 0, 50))
+	_check("an item pickup knows what it is", feather.item_id() == ItemDB.FEATHER)
+	_check("a player without it may take it", feather._may_take(hero))
+	feather.dropped_by = pid
+	_check("but not straight after dropping it themselves", not feather._may_take(hero))
+	feather.dropped_by = 0
+	feather._net_collected(hero.get_path())
+	_check("walking into it grants the item", hero.has_item(ItemDB.FEATHER))
+	var spare := Pickup.new()
+	add_child(spare)
+	spare.setup(Pickup.Kind.ITEM, ItemDB.ORDER.find(ItemDB.FEATHER), Vector3(50, 0, 50))
+	_check("a player who already has it leaves it for someone else", not spare._may_take(hero))
+	spare.queue_free()
+
+	_check("the town's chest always holds a feather",
+			ItemDB.chest_item(0, &"town") == ItemDB.FEATHER
+			and ItemDB.chest_item(7, &"town") == ItemDB.FEATHER)
+	var found := {}
+	for index in 16:
+		found[ItemDB.chest_item(index, &"plains")] = true
+	_check("the other chests hand out all three finds",
+			found.has(ItemDB.FEATHER) and found.has(ItemDB.BOOTS) and found.has(ItemDB.HOOKSHOT))
+	_check("sword and shield are kept, the rest can be dropped",
+			not ItemDB.is_droppable(ItemDB.SWORD) and not ItemDB.is_droppable(ItemDB.SHIELD)
+			and ItemDB.is_droppable(ItemDB.HOOKSHOT) and ItemDB.is_droppable(ItemDB.FEATHER)
+			and ItemDB.is_droppable(ItemDB.BOOTS))
+
+	## The lantern. Four things want a button and there are three buttons.
+	hero.add_item(ItemDB.HOOKSHOT)
+	_check("with every hotkey taken a new item waits in the panel",
+			hero.add_item(ItemDB.LANTERN) and hero.hotkey_of(ItemDB.LANTERN) < 0)
+	_check("and can be put on a button in place of something else",
+			hero.assign_hotkey(1, ItemDB.LANTERN) and hero.hotkeys[1] == ItemDB.LANTERN
+			and hero.hotkey_of(ItemDB.SHIELD) < 0, str(hero.hotkeys))
+	_check("the lantern is dropped on death like the other finds", ItemDB.is_droppable(ItemDB.LANTERN))
+
+	## Its fire burns monsters and leaves the party alone; the dragon's does the reverse.
+	var skeleton := _a_monster()
+	skeleton.global_position = Vector3(80, 0, 80)
+	hero.global_position = Vector3(80, 0, 80.5)
+	var skeleton_before := skeleton.health
+	var hero_before := hero.health
+	var lantern_fire := FirePatch.new()
+	add_child(lantern_fire)
+	## Dropped by somebody else: pid 999 is not the hero.
+	lantern_fire.ignite(Vector3(80, 0, 80), 2.0, Combatant.Faction.MONSTER, true, 999)
+	lantern_fire.burn_once()
+	_check("lantern fire burns a monster standing in it", skeleton.health < skeleton_before,
+			"%d -> %d" % [skeleton_before, skeleton.health])
+	_check("lantern fire does not burn the party", hero.health == hero_before)
+	## Friends are another matter: no damage, but they catch light and lose the reins.
+	_check("a lantern's fire sets another player alight", hero.is_alight())
+	_check("being alight costs no health", hero.health == hero_before)
+	hero._alight_left = 0.0
+	var own_fire := FirePatch.new()
+	add_child(own_fire)
+	own_fire.ignite(Vector3(80, 0, 80), 2.0, Combatant.Faction.MONSTER, true, pid)
+	own_fire.burn_once()
+	_check("but never the player who dropped it", not hero.is_alight())
+	own_fire.queue_free()
+	var dragon_fire := FirePatch.new()
+	add_child(dragon_fire)
+	dragon_fire.ignite(Vector3(80, 0, 80), 2.0)
+	skeleton_before = skeleton.health
+	dragon_fire.burn_once()
+	_check("the dragon's fire burns the party and not its own side",
+			hero.health < hero_before and skeleton.health == skeleton_before)
+	_check("trees, grass and wood are flammable; rock and stone are not",
+			Chunk._is_flammable("res://art/x/tree-tall.glb") and Chunk._is_flammable("res://x/grass-large.glb")
+			and Chunk._is_flammable("res://x/fence.glb")
+			and not Chunk._is_flammable("res://x/rock-a.glb")
+			and not Chunk._is_flammable("res://x/pillar-large.glb"))
+	lantern_fire.queue_free()
+	dragon_fire.queue_free()
+	skeleton.queue_free()
+
+	hero.queue_free()
+	PlayerRegistry.clear()
+
 
 func _rng(value: int) -> RandomNumberGenerator:
 	var rng := RandomNumberGenerator.new()

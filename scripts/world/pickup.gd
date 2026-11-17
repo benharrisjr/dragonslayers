@@ -1,19 +1,26 @@
 class_name Pickup
 extends Node3D
 
-## A coin or heart lying on the ground waiting to be walked into.
+## A coin, a heart or a piece of gear lying on the ground waiting to be walked into.
 ##
 ## Only the host decides a pickup was collected, then tells everyone to remove it. Letting each
 ## client claim locally would pay a four-player party four times for one coin.
 
-enum Kind { GOLD, HEART }
+enum Kind { GOLD, HEART, ITEM }
 
 const COLLECT_RADIUS := 1.6
 const BOB_HEIGHT := 0.18
 const LIFETIME := 90.0
 
 var kind: Kind = Kind.GOLD
+## For gold and hearts, how much. For gear, which item: its position in ItemDB.ORDER.
 var amount: int = 1
+## The player who dropped this by dying, if anyone. They are kept from scooping it straight
+## back up when they respawn beside it, so the rest of the party has a real chance at it.
+var dropped_by: int = 0
+## Seconds a dropped item ignores the player who dropped it: the four they spend dead, and four
+## more after they are back on their feet.
+const DROPPER_GRACE := 8.0
 
 ## Long enough to save the work, short enough that a coin never feels sticky to pick up.
 const COLLECT_INTERVAL := 0.1
@@ -30,6 +37,8 @@ func setup(pickup_kind: Kind, value: int, position: Vector3) -> void:
 	add_to_group("pickups")
 	kind = pickup_kind
 	amount = value
+	## Bobs and spins every drawn frame in _process, so it opts out of physics interpolation.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	global_position = position
 	_base_height = position.y
 	_build_visual()
@@ -42,7 +51,8 @@ func _process(delta: float) -> void:
 	position.y = _base_height + sin(_time * 3.0) * BOB_HEIGHT + BOB_HEIGHT
 	rotation.y += delta * 1.8
 
-	if _time > LIFETIME:
+	## Gear never expires: a feather that vanished after ninety seconds would strand the party.
+	if _time > LIFETIME and kind != Kind.ITEM:
 		queue_free()
 		return
 	if not NetworkManager.is_host():
@@ -55,9 +65,12 @@ func _process(delta: float) -> void:
 		return
 	_check_timer = COLLECT_INTERVAL
 	for body in PlayerRegistry.living_bodies():
-		if body.global_position.distance_to(global_position) <= COLLECT_RADIUS:
-			_collect(body)
-			return
+		if body.global_position.distance_to(global_position) > COLLECT_RADIUS:
+			continue
+		if kind == Kind.ITEM and not _may_take(body as PlayerCharacter):
+			continue
+		_collect(body)
+		return
 
 
 func _collect(player: Node) -> void:
@@ -78,10 +91,45 @@ func _net_collected(player_path: NodePath) -> void:
 				player.add_gold(amount)
 			Kind.HEART:
 				player.heal(amount)
+			Kind.ITEM:
+				player.add_item(item_id())
 	queue_free()
 
 
+func item_id() -> StringName:
+	return ItemDB.ORDER[amount] if kind == Kind.ITEM and amount >= 0 \
+			and amount < ItemDB.ORDER.size() else &""
+
+
+## Gear is one each: a player who already holds this item walks past it and leaves it for
+## someone who does not.
+func _may_take(player: PlayerCharacter) -> bool:
+	if player == null or player.has_item(item_id()):
+		return false
+	return not (dropped_by != 0 and player.pid == dropped_by and _time < DROPPER_GRACE)
+
+
 func _build_visual() -> void:
+	if kind == Kind.ITEM:
+		var model := ItemDB.build_model(item_id())
+		model.scale = Vector3.ONE * 1.5
+		add_child(model)
+		## A ring on the ground under it, so gear reads as gear from across a chunk and is not
+		## mistaken for a coin.
+		var ring := TorusMesh.new()
+		ring.inner_radius = 0.55
+		ring.outer_radius = 0.68
+		var glow := StandardMaterial3D.new()
+		glow.albedo_color = ItemDB.color(item_id())
+		glow.emission_enabled = true
+		glow.emission = ItemDB.color(item_id())
+		glow.emission_energy_multiplier = 1.2
+		var halo := MeshInstance3D.new()
+		halo.mesh = ring
+		halo.material_override = glow
+		halo.position.y = -0.35
+		add_child(halo)
+		return
 	var mesh: Mesh
 	var color: Color
 	if kind == Kind.GOLD:

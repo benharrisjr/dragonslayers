@@ -1,4 +1,32 @@
+# Godot 4+ specific ignores
 .godot/
-.DS_Store
+/android/
 builds/
-export_presets.cfg
+
+.DS_Store
+# Steam: the App ID file is read from the process working directory, so it only
+# matters next to the binary / at the project root for editor runs. Shipping it
+# inside a build lets anyone run the game without owning it.
+steam_appid.txt
+
+# build.sh staging output
+/dist/
+
+# Nightly build runtime logs
+/cron/logs/
+
+# Steamworks achievement upload bundle (tools/steam_achievements/), regenerated
+# from data/achievements/achievements.tres.
+steam_export/
+
+# Feedback Worker (tools/feedback_worker): npm deps, wrangler state, local secrets
+tools/feedback_worker/node_modules/
+tools/feedback_worker/.wrangler/
+tools/feedback_worker/.dev.vars
+
+# Written by build.sh for the exported build's version string (FeedbackReporter)
+/build_info.gd
+/build_info.gd.uid
+
+# Claude Code local state
+.claude/

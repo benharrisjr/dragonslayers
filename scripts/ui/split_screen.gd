@@ -11,6 +11,9 @@ extends Control
 ## pane can see them, which is the whole distinction between a peer and a split-screen slot.
 
 const MIN_PANE_SIZE := Vector2(160, 120)
+## The HUD was drawn for a 1280x720 canvas; the project canvas is 1920x1080, so each pane lays
+## its 2D overlay out at 1/1.5 size and stretches it back up. 3D rendering is unaffected.
+const HUD_SCALE := 1.5
 
 var panes: Array[SubViewportContainer] = []
 var cameras: Array[PlayerCamera] = []
@@ -99,6 +102,10 @@ func _layout() -> void:
 		## With stretch enabled the container drives its SubViewport's size, so setting it here
 		## as well is both redundant and a warning every time the window changes.
 		pane.size = rect.size.max(MIN_PANE_SIZE)
+		var viewport := pane.get_child(0) as SubViewport
+		if viewport != null:
+			viewport.size_2d_override = Vector2i(pane.size / HUD_SCALE)
+			viewport.size_2d_override_stretch = true
 
 
 ## Click-to-target. There is one mouse for up to four seats, so the click belongs to whichever

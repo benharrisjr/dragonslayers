@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="AchievementListData" format=3 uid="uid://b1anoforgwc7q"]
+
+[ext_resource type="Script" uid="uid://c2bckjkal76da" path="res://data/achievements/achievement_list_data.gd" id="1_list"]
+[ext_resource type="Script" uid="uid://drlmceo4dyarm" path="res://data/achievements/achievement_data.gd" id="2_ach"]
+
+[sub_resource type="Resource" id="Ach_DragonSlain"]
+script = ExtResource("2_ach")
+id = &"dragon_slain"
+steam_api_name = "ACH_DRAGON_SLAIN"
+display_name = "Dragonslayer"
+description = "Kill the dragon on the mountain."
+show_progress = false
+sort_order = 10
+
+[sub_resource type="Resource" id="Ach_VeteranSlayer"]
+script = ExtResource("2_ach")
+id = &"veteran_slayer"
+steam_api_name = "ACH_VETERAN_SLAYER"
+display_name = "Veteran Slayer"
+description = "Kill the dragon 10 times."
+condition = 2
+save_field = &"dragons_slain"
+required_count = 10
+sort_order = 20
+
+[resource]
+script = ExtResource("1_list")
+achievements = Array[ExtResource("2_ach")]([SubResource("Ach_DragonSlain"), SubResource("Ach_VeteranSlayer")])

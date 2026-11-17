@@ -26,6 +26,8 @@ const HEIGHT_OFFSET := 1.6
 const TURN_SPEED := 2.4
 ## Radians of camera rotation per pixel of mouse movement while the right button is held.
 const MOUSE_SENSITIVITY := 0.006
+## Degrees per second the right stick tilts the view at full deflection.
+const STICK_PITCH_SPEED := 45.0
 ## How far the pitch may be dragged either side of whatever the current framing wants. Bounded
 ## rather than free: the fixed high angle is what makes the plateaus and their edges readable,
 ## and letting the camera drop to ground level would hide the ledge you are about to be knocked
@@ -36,6 +38,8 @@ const PITCH_RANGE := 22.0
 const FOLLOW_SHARPNESS := 8.0
 ## How close to the wall the camera is allowed to get when something is between it and the player.
 const COLLISION_MARGIN := 0.45
+## Metres per second the camera backs out to its full distance once nothing is in the way.
+const RELEASE_SPEED := 14.0
 
 var player: PlayerCharacter
 var yaw: float = 0.0
@@ -48,11 +52,18 @@ var _boss_framing: float = 0.0
 ## Manual pitch adjustment from a right-button drag, applied on top of whichever framing is
 ## active so that dragging the view does not undo the boss pull-back.
 var pitch_offset: float = 0.0
+## How far out the camera currently sits after collision; negative until first placed.
+var _pulled_distance: float = -1.0
+var _frame_delta: float = 0.0
 
 
 func setup(target: PlayerCharacter, slot: int) -> void:
 	player = target
 	_input = PlayerInput.new(slot)
+	## The rig is placed every drawn frame from the player's *interpolated* position. Bodies only
+	## move on physics ticks; reading their raw position at a display rate that is not a
+	## multiple of the tick rate is what makes a jumping character judder against the view.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 
 	camera = Camera3D.new()
 	camera.name = "Camera3D"
@@ -75,8 +86,11 @@ func setup(target: PlayerCharacter, slot: int) -> void:
 func _process(delta: float) -> void:
 	if player == null or not is_instance_valid(player):
 		return
+	_frame_delta = delta
 	if _input != null:
 		yaw -= _input.camera_turn() * TURN_SPEED * delta
+		pitch_offset = clampf(pitch_offset + _input.camera_pitch() * STICK_PITCH_SPEED * delta,
+				-PITCH_RANGE, PITCH_RANGE)
 	## The player reads its movement basis from here, so pushing "up" always means "away from
 	## the camera" no matter which way this pane happens to be facing.
 	player.camera_yaw = yaw
@@ -84,7 +98,7 @@ func _process(delta: float) -> void:
 	var wanted_framing := 1.0 if _in_boss_arena() else 0.0
 	_boss_framing = move_toward(_boss_framing, wanted_framing, delta / FRAMING_BLEND)
 
-	var focus := player.global_position + Vector3.UP * HEIGHT_OFFSET
+	var focus := player.get_global_transform_interpolated().origin + Vector3.UP * HEIGHT_OFFSET
 	## While fighting, sit the focus between the player and the dragon so both are on screen
 	## instead of framing the player with the boss somewhere off the edge.
 	var dragon := _dragon()
@@ -122,6 +136,7 @@ func _apply() -> void:
 
 	## Pull in if terrain is in the way. Cliffs are everywhere and the camera sitting inside one
 	## is the difference between a readable fight and a black screen.
+	var allowed := distance
 	var space := get_world_3d().direct_space_state
 	if space != null:
 		var query := PhysicsRayQueryParameters3D.create(_smoothed_focus, wanted)
@@ -132,7 +147,16 @@ func _apply() -> void:
 			query.exclude = [player.get_rid()]
 		var hit := space.intersect_ray(query)
 		if not hit.is_empty():
-			wanted = hit["position"] + (_smoothed_focus - hit["position"]).normalized() * COLLISION_MARGIN
+			allowed = maxf(0.5, _smoothed_focus.distance_to(hit["position"]) - COLLISION_MARGIN)
+
+	## In at once, out gradually. Coming in has to be immediate or the camera spends a frame
+	## inside the cliff; but letting it spring straight back out the moment a tree trunk has
+	## passed is a visible lurch, so the way out is eased.
+	if _pulled_distance < 0.0 or allowed < _pulled_distance:
+		_pulled_distance = allowed
+	else:
+		_pulled_distance = move_toward(_pulled_distance, allowed, RELEASE_SPEED * _frame_delta)
+	wanted = _smoothed_focus + offset.normalized() * _pulled_distance
 
 	camera.global_position = wanted
 	camera.look_at(_smoothed_focus, Vector3.UP)

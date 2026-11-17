@@ -29,6 +29,8 @@ func launch(from: Combatant, data: AbilityData, origin: Vector3, aim: Vector3) -
 	## through the height everything is actually standing at. Firing from a fixed offset above
 	## the shooter's feet used to send every arrow over the top of every target.
 	var launch_height := from.hit_height * 0.5 if from != null else 0.9
+	## Moved every drawn frame in _process, so there is nothing for the engine to interpolate.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	global_position = origin + Vector3.UP * launch_height
 	var direction := aim.normalized() if aim.length_squared() > 0.001 else Vector3.FORWARD
 	_velocity = direction * data.projectile_speed

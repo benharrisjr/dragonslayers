@@ -15,16 +15,20 @@ extends Node3D
 const STEPS := 14
 ## Width of each terrace. STEPS x this is how far the ring extends beyond the map.
 const STEP_WIDTH := 11.0
-## Flat ground between the last chunk and the first terrace, so the ring is something on the
-## horizon rather than a wall pressed against the rim of an edge chunk.
-const APRON_WIDTH := 16.0
+## Where the innermost wall starts. Below the sea bed, so the wall meets every edge chunk
+## whatever tier it sits on -- the deep water included -- with no gap to see under.
+const FLOOR := -3.0
+## How far above the map's ground the innermost wall rises. The chunks along the edge stand at
+## anything from sea level to the highlands, 12.6 m up, so the first wall has to clear the
+## tallest of them with room to spare or the party could simply step off the map onto it.
+const INNER_WALL_TOP := 24.0
 ## Rise of the first and shortest terrace. The best jump in the game clears 2.71 m, so this is
 ## the number that decides whether the ring can be scaled at all -- it keeps a margin over that
 ## rather than sitting just above it.
 const STEP_RISE := 3.6
 ## Each terrace rises a little more than the one inside it, so the ring reads as foothills
 ## climbing into peaks instead of a single slab. Fourteen steps come to about 100 m, comfortably
-## over the 54 m summit -- from the top of the mountain you look at cliffs, not past them -- and
+## over the 23 m summit -- from the top of the mountain you look at cliffs, not past them -- and
 ## the outermost terrace is a believable 10 m rather than a skyscraper.
 const RISE_GROWTH := 0.15
 
@@ -58,13 +62,13 @@ func _build_mesh(span: float) -> ArrayMesh:
 	var surface := SurfaceTool.new()
 	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
 
-	var bottom := 0.0
+	var bottom := FLOOR
 	for step in STEPS:
 		## Each terrace is a rectangular frame around the previous one: `inner` is where it
 		## starts, `outer` where the next one begins.
-		var inner := APRON_WIDTH + step * STEP_WIDTH
+		var inner := step * STEP_WIDTH
 		var outer := inner + STEP_WIDTH
-		var top := bottom + rise_of(step)
+		var top := INNER_WALL_TOP if step == 0 else bottom + rise_of(step)
 		## Higher terraces are paler, which reads as distance and stops the ring becoming one
 		## flat silhouette.
 		var tint: float = float(step) / maxf(1.0, float(STEPS - 1))
@@ -73,10 +77,6 @@ func _build_mesh(span: float) -> ArrayMesh:
 		_frame_top(surface, top_color, span, inner, outer, top)
 		_frame_wall(surface, CLIFF_COLOR.lerp(top_color, tint * 0.35), span, inner, bottom, top)
 		bottom = top
-
-	## The flat apron between the map and the first terrace, so the ground runs out to the
-	## cliffs rather than stopping in mid-air at the chunk rim.
-	_frame_top(surface, BASE_COLOR, span, 0.0, APRON_WIDTH, 0.0)
 
 	surface.generate_normals()
 	return surface.commit()
@@ -138,11 +138,11 @@ static func rise_of(step: int) -> float:
 ## How far the ring reaches beyond the map, and how tall it stands. Used by the tests, and by
 ## anything that needs to know where the world genuinely ends.
 static func extent() -> float:
-	return APRON_WIDTH + STEPS * STEP_WIDTH
+	return STEPS * STEP_WIDTH
 
 
 static func height() -> float:
-	var total := 0.0
-	for step in STEPS:
+	var total := INNER_WALL_TOP
+	for step in range(1, STEPS):
 		total += rise_of(step)
 	return total

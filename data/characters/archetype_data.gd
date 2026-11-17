@@ -1,9 +1,8 @@
 class_name ArchetypeData
 extends Resource
 
-## A playable class: which KayKit model to wear, what it holds, how it moves, and what it can
-## cast. The four archetypes differ only in this data, so the player controller never branches
-## on class.
+## A playable hero: which KayKit model to wear, what it holds and how it moves. The four heroes
+## differ only in model and colour; what a player can do comes from their gear (ItemDB).
 
 @export var id: StringName = &""
 @export var display_name: String = ""

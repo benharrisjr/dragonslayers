@@ -3,13 +3,15 @@ extends RefCounted
 
 ## Reads one split-screen slot's controls.
 ##
-## The InputMap defines the same actions four times over, prefixed p0_ through p3_, with slot 0
-## bound to keyboard+mouse and slots 1-3 bound to joypad devices 0-2. Per-slot actions rather
-## than filtering raw InputEvents by device id keeps Godot's own deadzone and axis handling
-## instead of reimplementing it, at the cost of a verbose [input] section that is generated
-## rather than hand-written.
+## The same actions exist four times over, prefixed p0_ through p3_. PlayerBindings builds them
+## at runtime from whichever devices claimed each seat in the lobby, so this class never needs
+## to know whether a slot is a keyboard, a gamepad, or both.
 
 const MOUSE_SLOT := 0
+
+## False while a menu is open over the match. The world keeps running (it has to, online), so
+## the players simply stop reading their controls rather than the tree being paused.
+static var enabled: bool = true
 
 var slot: int = 0
 
@@ -23,42 +25,73 @@ func _init(player_slot: int) -> void:
 
 ## Raw stick/WASD direction, y positive meaning "away from the camera".
 func move_vector() -> Vector2:
+	if not enabled:
+		return Vector2.ZERO
 	return Input.get_vector(_prefix + "left", _prefix + "right",
 			_prefix + "down", _prefix + "up")
 
 
 func jump_pressed() -> bool:
-	return Input.is_action_just_pressed(_prefix + "jump")
+	return enabled and Input.is_action_just_pressed(_prefix + "jump")
 
 
 func jump_held() -> bool:
-	return Input.is_action_pressed(_prefix + "jump")
+	return enabled and Input.is_action_pressed(_prefix + "jump")
 
 
-func attack_pressed() -> bool:
-	return Input.is_action_just_pressed(_prefix + "attack")
+## The three gear hotkeys, 0-based.
+func item_pressed(hotkey: int) -> bool:
+	return enabled and Input.is_action_just_pressed("%sitem_%d" % [_prefix, hotkey + 1])
 
 
-func ability_pressed(index: int) -> bool:
-	return Input.is_action_just_pressed("%sability_%d" % [_prefix, index + 1])
+func item_held(hotkey: int) -> bool:
+	return enabled and Input.is_action_pressed("%sitem_%d" % [_prefix, hotkey + 1])
+
+
+func dash_pressed() -> bool:
+	return enabled and Input.is_action_just_pressed(_prefix + "dash")
+
+
+func inventory_pressed() -> bool:
+	return enabled and Input.is_action_just_pressed(_prefix + "inventory")
+
+
+## Stepping left or right through a menu with the stick, D-pad-style: one step per push.
+func menu_step() -> int:
+	if not enabled:
+		return 0
+	if Input.is_action_just_pressed(_prefix + "left"):
+		return -1
+	if Input.is_action_just_pressed(_prefix + "right"):
+		return 1
+	return 0
 
 
 func target_next_pressed() -> bool:
-	return Input.is_action_just_pressed(_prefix + "target_next")
+	return enabled and Input.is_action_just_pressed(_prefix + "target_next")
 
 
 func target_prev_pressed() -> bool:
-	return Input.is_action_just_pressed(_prefix + "target_prev")
+	return enabled and Input.is_action_just_pressed(_prefix + "target_prev")
 
 
 func interact_pressed() -> bool:
-	return Input.is_action_just_pressed(_prefix + "interact")
+	return enabled and Input.is_action_just_pressed(_prefix + "interact")
 
 
 ## Camera yaw, as a -1..1 rate rather than a delta, so the camera integrates it at its own
 ## speed and a stick held at half deflection turns at half rate.
 func camera_turn() -> float:
+	if not enabled:
+		return 0.0
 	return Input.get_axis(_prefix + "cam_left", _prefix + "cam_right")
+
+
+## Camera tilt as a -1..1 rate: negative (stick up) looks up, matching a mouse drag upwards.
+func camera_pitch() -> float:
+	if not enabled:
+		return 0.0
+	return Input.get_axis(_prefix + "cam_up", _prefix + "cam_down")
 
 
 ## Only one mouse exists no matter how many people are on the couch, so click-to-target is the

@@ -1,0 +1,20 @@
+# Cloudflare Worker relay for the in-game bug report form
+# (autoloads/feedback_reporter.gd). Holds the Discord webhook as a secret:
+#   npx wrangler secret put DISCORD_WEBHOOK_URL
+name = "feedback-game-template"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+[vars]
+# Must match FeedbackReporter.GAME_KEY. Not a secret (it ships in the .pck);
+# it only filters out drive-by requests.
+GAME_KEY = "CHANGE-ME"
+MAX_BODY_BYTES = "8000000"
+# The webhook posts into a forum channel: every report opens its own thread.
+FORUM_CHANNEL = "true"
+
+# Per-IP limit on reports reaching Discord.
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "game-template"
+simple = { limit = 3, period = 60 }

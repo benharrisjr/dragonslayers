@@ -84,7 +84,7 @@ func pick_at(camera: Camera3D, screen_position: Vector2) -> bool:
 func nearest_in_front(max_distance: float) -> Combatant:
 	if owner_player == null:
 		return null
-	var facing := -owner_player.global_transform.basis.z
+	var facing := owner_player.facing()
 	var best: Combatant = null
 	var best_score := -1.0
 	for candidate in _sorted_candidates():
@@ -112,7 +112,8 @@ func _process(delta: float) -> void:
 	if current == null:
 		return
 	_spin += delta * 2.2
-	_reticle.global_position = current.global_position + Vector3.UP * 2.4
+	_reticle.global_position = current.get_global_transform_interpolated().origin \
+			+ Vector3.UP * 2.4
 	_reticle.rotation.y = _spin
 
 
@@ -151,6 +152,8 @@ func _build_reticle(color: Color) -> void:
 	_reticle.mesh = mesh
 	_reticle.rotation_degrees.x = 90.0
 	_reticle.top_level = true
+	## Placed every drawn frame from the target's interpolated position.
+	_reticle.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	_reticle.layers = 1 << (FIRST_MARKER_LAYER + slot)
 	_reticle.visible = false
 	add_child(_reticle)

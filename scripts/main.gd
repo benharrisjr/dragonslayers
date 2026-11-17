@@ -1,7 +1,10 @@
 class_name Main
 extends Node
 
-## Entry point: menu, then world, then split-screen.
+## The game scene: lobby, then world, then split-screen, with a pause menu over the top.
+##
+## The template's main menu loads this scene when Play is pressed and it hands back to that menu
+## when the players leave.
 ##
 ## The host does not build the world until it says go, and clients do not build it until the
 ## host's seed arrives -- that single broadcast is the only thing standing between "four
@@ -11,20 +14,38 @@ const HOST_START_DELAY := 0.6
 
 var world: GameWorld
 var split_screen: SplitScreen
-var menu: MainMenu
+var lobby: LobbyScreen
 var outcome: OutcomeScreen
+var options: OptionsScreen
 
-var _pending_start: bool = false
+## The frame the pause menu last opened or closed on. One Start press can arrive twice -- once
+## raw, once as the template's routed action -- and must not open the menu and shut it again.
+var _menu_toggled_frame: int = -1
 
 
 func _ready() -> void:
-	menu = MainMenu.new()
-	menu.name = "MainMenu"
-	add_child(menu)
-	menu.start_requested.connect(_on_start_requested)
+	## Projectiles and fire patches are parented here (GameWorld.effects_root).
+	add_to_group(GameWorld.EFFECTS_GROUP)
+	PlayerInput.enabled = true
+	PlayerBindings.reapply()
+
+	lobby = LobbyScreen.new()
+	lobby.name = "Lobby"
+	add_child(lobby)
+	lobby.start_requested.connect(_on_lobby_start)
+	lobby.begin_requested.connect(func() -> void: NetworkManager.start_match())
+	lobby.cancel_requested.connect(func() -> void: NetworkManager.leave())
+	lobby.back_requested.connect(_quit_to_main_menu)
 	NetworkManager.match_started.connect(_on_match_started)
+	NetworkManager.join_failed.connect(_on_join_failed)
+	GameState.phase_changed.connect(func(_phase: GameState.Phase) -> void: _sync_input_state())
+	Input.joy_connection_changed.connect(_on_joy_connection_changed)
 
 	_handle_command_line()
+
+
+func _exit_tree() -> void:
+	PlayerInput.enabled = true
 
 
 ## `--playtest`, `--host`, `--join=ADDR`, `--slots=N` and `--seed=N` exist so a match can be
@@ -65,7 +86,15 @@ func _handle_command_line() -> void:
 		capture.path = args["capture"]
 		capture.delay = float(args.get("capture-delay", "5"))
 		capture.follow_up = int(args.get("capture-count", "0"))
+		capture.overview = args.has("capture-overview")
+		capture.gear = args.has("capture-gear")
 		add_child(capture)
+
+	if args.has("jitter"):
+		var jitter := JitterProbe.new()
+		jitter.name = "JitterProbe"
+		jitter.main = self
+		add_child(jitter)
 
 	if args.has("playtest"):
 		var playtest := Playtest.new()
@@ -74,25 +103,31 @@ func _handle_command_line() -> void:
 		add_child(playtest)
 
 	if args.has("join"):
-		_on_start_requested("join", args["join"], slots)
+		PlayerBindings.apply_auto(slots)
+		_start_session("join", args["join"], slots)
 	elif args.has("host"):
-		_on_start_requested("host", "", slots)
-		## Hosting from the command line skips the "wait for friends" step, since nobody is
-		## there to press the key. Late joiners are handled by NetworkManager anyway.
-		_pending_start = false
-		_start_match_soon(world_seed)
+		PlayerBindings.apply_auto(slots)
+		## Hosting from the command line skips the waiting room, since nobody is there to
+		## press Start. Late joiners are handled by NetworkManager anyway.
+		if NetworkManager.host_game(slots):
+			lobby.visible = false
+			_start_match_soon(world_seed)
 	elif args.has("playtest") or args.has("solo") or args.has("perf"):
-		_on_start_requested("offline", "", slots, world_seed if world_seed != 0 else 4242)
+		PlayerBindings.apply_auto(slots)
+		_start_session("offline", "", slots, world_seed if world_seed != 0 else 4242)
 
 
-## Puts every local player next to a named landmark. "dragon" is the summit; anything else is
-## read as a biome id.
+
+## Puts every local player next to a named landmark. "dragon" is the summit, "ramp" the foot of
+## the mountain's ascent; anything else is read as a biome id.
 func _goto(destination: String) -> void:
 	if world == null:
 		return
 	var at := Vector3.ZERO
 	if destination == "dragon" and world.dragon != null:
 		at = world.dragon.global_position + Vector3(0.0, 1.0, 12.0)
+	elif destination == "ramp":
+		at = world.ascent_foot() + Vector3.UP * 1.0
 	else:
 		var chunk := world.chunk_of_biome(StringName(destination))
 		if chunk == null:
@@ -103,32 +138,34 @@ func _goto(destination: String) -> void:
 		var player := PlayerRegistry.body_of(pid) as PlayerCharacter
 		if player != null:
 			player.global_position = at + Vector3(offset * 2.0, 0.0, 0.0)
+			player.reset_physics_interpolation()
 			offset += 1
 
 
-func _on_start_requested(mode: String, address: String, slots: int,
-		world_seed: int = 0) -> void:
+## The lobby hands over one device list per joined player; those become the players' controls
+## before anything that reads input exists.
+func _on_lobby_start(mode: String, address: String, devices: Array) -> void:
+	PlayerBindings.apply(devices)
+	_start_session(mode, address, devices.size())
+
+
+func _start_session(mode: String, address: String, slots: int, world_seed: int = 0) -> void:
 	match mode:
 		"offline":
 			NetworkManager.start_offline(slots)
-			menu.visible = false
+			lobby.visible = false
 			_start_match_soon(world_seed)
 		"host":
 			if NetworkManager.host_game(slots):
-				menu.set_status("hosting -- press Space when everyone has joined")
-				_pending_start = true
+				lobby.show_wait("Hosting on port %d  ·  waiting for players" % Transport.DEFAULT_PORT,
+						true)
+			else:
+				lobby.show_message("Could not host: is port %d already in use?" % Transport.DEFAULT_PORT)
 		"join":
 			if NetworkManager.join_game(address, slots):
-				menu.set_status("connecting to %s ..." % address)
-
-
-func _unhandled_input(_event: InputEvent) -> void:
-	## The host starts the match once the lobby looks right, rather than on a countdown that
-	## either rushes a late friend or makes everyone wait.
-	if _pending_start and Input.is_action_just_pressed("ui_lobby_join"):
-		_pending_start = false
-		menu.visible = false
-		NetworkManager.start_match()
+				lobby.show_wait("Connecting to %s ..." % address, false)
+			else:
+				lobby.show_message("Could not connect to %s" % address)
 
 
 func _start_match_soon(world_seed: int) -> void:
@@ -140,15 +177,14 @@ func _on_match_started(world_seed: int) -> void:
 	## Tear the old match down completely before building the next one. The registry outlives
 	## the world, so a rebuild that leaves it holding the previous world's bodies hands every
 	## monster a list of freed players to chase.
-	if world != null:
-		world.teardown()
-		world.queue_free()
-	if split_screen != null:
-		split_screen.queue_free()
-	menu.visible = false
+	_teardown_match()
+	lobby.visible = false
 
 	world = GameWorld.new()
 	world.name = "World"
+	## Said outright rather than inherited: this scene hangs under the main scene's root
+	## Control, and Control nodes do not pass physics interpolation down to 3D children.
+	world.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	add_child(world)
 	world.build(world_seed)
 
@@ -162,5 +198,133 @@ func _on_match_started(world_seed: int) -> void:
 		outcome = OutcomeScreen.new()
 		outcome.name = "OutcomeScreen"
 		add_child(outcome)
+		outcome.rematch_requested.connect(func() -> void: NetworkManager.start_match())
+		outcome.main_menu_requested.connect(_quit_to_main_menu)
 	else:
 		move_child(outcome, get_child_count() - 1)
+	if options != null:
+		move_child(options, get_child_count() - 1)
+	_sync_input_state()
+
+
+func _teardown_match() -> void:
+	if world != null:
+		world.teardown()
+		world.queue_free()
+		world = null
+	if split_screen != null:
+		split_screen.queue_free()
+		split_screen = null
+	## Effects in flight belong to the match that fired them.
+	for node in get_children():
+		if node is Projectile or node is FirePatch:
+			node.queue_free()
+
+
+func _on_join_failed(reason: String) -> void:
+	## Also how a client learns the host has gone: the match it was in no longer exists.
+	_close_options()
+	_teardown_match()
+	if outcome != null:
+		outcome.visible = false
+	lobby.show_message(reason.capitalize())
+	_sync_input_state()
+
+
+func _quit_to_main_menu() -> void:
+	if SceneManager.is_transitioning():
+		return
+	NetworkManager.leave()
+	if world != null:
+		world.teardown()
+	GameState.phase = GameState.Phase.LOBBY
+	SaveManager.save_game()
+	SceneManager.change_scene(ProjectConfig.MAIN_MENU_SCENE)
+
+
+# --- pause menu and who owns the gamepad --------------------------------------------------
+
+func in_match() -> bool:
+	return world != null
+
+
+func _menu_open() -> bool:
+	return options != null and options.visible
+
+
+## One place decides whether the players or the menus have the controls. During play the
+## template's pad cursor is blocked, or the left stick would steer a pointer around the screen
+## as well as the character; with any menu up the cursor comes back and the players stop
+## reading input.
+func _sync_input_state() -> void:
+	var playing := in_match() and not _menu_open() \
+			and GameState.phase == GameState.Phase.PLAYING
+	PlayerInput.enabled = playing
+	if playing and not is_in_group(PadCursor.BLOCK_GROUP):
+		add_to_group(PadCursor.BLOCK_GROUP)
+	elif not playing and is_in_group(PadCursor.BLOCK_GROUP):
+		remove_from_group(PadCursor.BLOCK_GROUP)
+	if not playing and split_screen != null and split_screen.is_looking():
+		split_screen.end_look()
+
+
+## Start on a pad, while playing. It has to be read raw and here: the blocked pad cursor
+## swallows every joypad event, and scene nodes see events before that autoload does.
+func _input(event: InputEvent) -> void:
+	var button := event as InputEventJoypadButton
+	if button == null or not button.pressed or button.button_index != JOY_BUTTON_START:
+		return
+	if not is_in_group(PadCursor.BLOCK_GROUP) or not in_match():
+		return
+	get_viewport().set_input_as_handled()
+	_toggle_options()
+
+
+## Escape -- and Start again once the menu is open, when the pad cursor routes it to this action.
+func _unhandled_input(event: InputEvent) -> void:
+	if not in_match() or Keybinds.suppress_hotkeys:
+		return
+	if GameState.phase != GameState.Phase.PLAYING:
+		return
+	if event.is_action_pressed("open_menu"):
+		get_viewport().set_input_as_handled()
+		_toggle_options()
+
+
+func _toggle_options() -> void:
+	if _menu_toggled_frame == Engine.get_process_frames():
+		return
+	_menu_toggled_frame = Engine.get_process_frames()
+	if _menu_open():
+		options.request_close()
+	else:
+		_open_options()
+
+
+func _open_options() -> void:
+	if options == null:
+		options = OptionsScreen.new()
+		options.name = "PauseMenu"
+		options.closed.connect(_close_options)
+		options.main_menu_requested.connect(_quit_to_main_menu)
+		add_child(options)
+		options.show_ingame_buttons()
+	options.visible = true
+	_sync_input_state()
+
+
+func _close_options() -> void:
+	if options != null:
+		options.visible = false
+	_sync_input_state()
+
+
+## A pad that drops out mid-fight would leave its player standing still with no explanation,
+## so the menu comes up. Plugging it back in needs nothing: the bindings name the device id.
+func _on_joy_connection_changed(device: int, connected: bool) -> void:
+	if connected or not in_match() or _menu_open():
+		return
+	if PlayerBindings.slot_of_pad(device) >= 0 \
+			and PlayerBindings.slot_of_pad(device) < NetworkManager.local_slot_count \
+			and GameState.phase == GameState.Phase.PLAYING:
+		_open_options()

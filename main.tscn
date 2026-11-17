@@ -1,0 +1,16 @@
+[gd_scene format=3 uid="uid://bng3l8n7qv5am"]
+
+[ext_resource type="PackedScene" path="res://scenes/splash/splash_screen.tscn" id="1"]
+[ext_resource type="Script" path="res://scripts/boot.gd" id="2"]
+
+[node name="Control" type="Control" unique_id=1655465188]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("2")
+
+[node name="SplashScreen" parent="." unique_id=1780838733 instance=ExtResource("1")]
+layout_mode = 1

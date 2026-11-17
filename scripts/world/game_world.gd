@@ -16,25 +16,38 @@ const PLAYER_SPAWN_SPREAD := 1.8
 
 var chunks: Array[Chunk] = []
 var layout: Array[StringName] = []
+## Tier of each chunk (WorldGenerator.Tier), row-major like the layout.
+var tiers: PackedInt32Array
 var dragon: Dragon
 
 var _players_root: Node3D
 
 
+## Where short-lived world effects (projectiles, fire patches) are parented. The match's root
+## node joins this group; the fallback keeps scenes run on their own (the tests) working.
+const EFFECTS_GROUP := &"effects_root"
+
+static func effects_root(tree: SceneTree) -> Node:
+	var found := tree.get_first_node_in_group(EFFECTS_GROUP)
+	return found if found != null else tree.current_scene
+
+
 func build(world_seed: int) -> void:
-	layout = WorldGenerator.layout(world_seed)
+	var plan := WorldGenerator.plan(world_seed)
+	layout.assign(plan["biomes"])
+	tiers = plan["tiers"]
 	_build_environment()
 
 	for index in layout.size():
 		var chunk := Chunk.new()
 		add_child(chunk)
-		chunk.build(index, layout[index], GameState.chunk_rng(index))
+		chunk.build(index, layout[index], GameState.chunk_rng(index),
+				WorldGenerator.context(tiers, index))
 		chunks.append(chunk)
 
 	_place_dragon()
 
-	## Built after the chunks so it can sit flush against the outer rims, which the generator
-	## pins to level 0 on every chunk.
+	## Built after the chunks; it stands directly against the outer rims, whatever tier they are.
 	var boundary := WorldBoundary.new()
 	add_child(boundary)
 	boundary.build()
@@ -56,6 +69,26 @@ func teardown() -> void:
 	for pid in PlayerRegistry.all_pids():
 		PlayerRegistry.despawn(pid)
 	PlayerRegistry.bodies.clear()
+
+
+## World position of the bottom of the mountain's ascent ramp, on the rim walkway.
+func ascent_foot() -> Vector3:
+	var mountain := chunk_of_biome(&"mountain")
+	if mountain == null:
+		return Vector3.ZERO
+	var side: int = WorldGenerator.context(tiers, mountain.index)["ascent_side"]
+	var tile := WorldGenerator._from_side(WorldGenerator.CHUNK_TILES, side,
+			WorldGenerator.BORDER - 2, WorldGenerator.CHUNK_TILES / 2)
+	return mountain.global_position + mountain._tile_centre(tile.x, tile.y)
+
+
+## Unit vector pointing up the ascent ramp, from the rim towards the summit.
+func ascent_direction() -> Vector3:
+	var mountain := chunk_of_biome(&"mountain")
+	if mountain == null:
+		return Vector3.FORWARD
+	var side: int = WorldGenerator.context(tiers, mountain.index)["ascent_side"]
+	return -Vector3(ChunkMesher.NEIGHBOUR_DX[side], 0.0, ChunkMesher.NEIGHBOUR_DZ[side])
 
 
 func chunk_of_biome(biome_id: StringName) -> Chunk:
@@ -83,6 +116,7 @@ func _place_dragon() -> void:
 	dragon.look_at_from_position(dragon.global_position,
 			Vector3(WorldGenerator.map_centre().x, dragon.global_position.y,
 					WorldGenerator.map_centre().z), Vector3.UP)
+	dragon.reset_physics_interpolation()
 	dragon.defeated.connect(_on_dragon_defeated)
 
 
@@ -90,6 +124,11 @@ func _place_dragon() -> void:
 ## the match rather than dropping loot.
 func _on_dragon_defeated() -> void:
 	GameState.phase = GameState.Phase.VICTORY
+	## Counted per save slot; the counter drives the "Veteran Slayer" achievement.
+	SaveManager.add_stat(&"dragons_slain")
+	Achievements.grant(&"dragon_slain")
+	Achievements.evaluate()
+	SaveManager.save_game()
 
 
 ## The party starts together in town: it is the only chunk with no monsters, and starting at the
@@ -132,9 +171,14 @@ func _spawn_player(pid: int) -> void:
 	_players_root.add_child(player)
 	## Spread by slot rather than by arrival order, so the same pid lands in the same spot on
 	## every peer even if the roster arrived in a different order.
-	var angle := TAU * float(pid % 8) / 8.0
+	## By position in the sorted roster, which every peer agrees on. The pid itself will not do:
+	## two machines' first players can share a remainder and land on the same spot.
+	var order := PlayerRegistry.all_pids()
+	order.sort()
+	var angle := TAU * float(maxi(0, order.find(pid))) / 8.0
 	player.global_position = origin + Vector3(
 		cos(angle) * PLAYER_SPAWN_SPREAD, 1.0, sin(angle) * PLAYER_SPAWN_SPREAD)
+	player.reset_physics_interpolation()
 	player.configure(pid, archetype)
 	_add_player_sync(player)
 
@@ -146,7 +190,8 @@ func _add_player_sync(player: PlayerCharacter) -> void:
 	if not NetworkManager.is_networked():
 		return
 	var config := SceneReplicationConfig.new()
-	for property in [".:position", ".:rotation", ".:velocity"]:
+	## `blocking` rides along because the host is the one that applies a block when a hit lands.
+	for property in [".:position", ".:rotation", ".:velocity", ".:blocking"]:
 		config.add_property(NodePath(property))
 		config.property_set_replication_mode(NodePath(property),
 				SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -182,11 +227,47 @@ func _prewarm_effects() -> void:
 	bolt.position = hidden
 	add_child(bolt)
 
-	## One frame is enough for both to be submitted and their shaders built.
-	await get_tree().process_frame
-	await get_tree().process_frame
+	## Scenery and gear. Every distinct prop model in this map, and every item, drawn once at a
+	## speck of its size right where the party is standing. Walking towards a chunk used to
+	## stall for a seventh of a second each time a kind of tree or rock came into view for the
+	## first time; this pays for all of them during the load instead. Unlike the fire above they
+	## have to be in front of a camera to count, so they sit at the spawn, far too small to see.
+	var warm := Node3D.new()
+	warm.name = "Prewarm"
+	add_child(warm)
+	var town := chunk_of_biome(&"town")
+	warm.global_position = (town.centre_tile_position() if town != null
+			else WorldGenerator.map_centre()) + Vector3.UP * 1.0
+	var seen := {}
+	for biome_id in layout:
+		for prop: Dictionary in BiomeLibrary.get_biome(biome_id).props:
+			if seen.has(prop["path"]):
+				continue
+			seen[prop["path"]] = true
+			var packed := load(prop["path"]) as PackedScene
+			if packed != null:
+				var model := packed.instantiate() as Node3D
+				model.scale = Vector3.ONE * 0.002
+				warm.add_child(model)
+	## Skeletons too: a skinned model is a different shader from a tree, and the first one to
+	## walk into draw range paid for it mid-stride.
+	for monster_id: StringName in MonsterDB.all_ids():
+		var packed := load(MonsterDB.get_monster(monster_id).model_path) as PackedScene
+		if packed != null:
+			var model := packed.instantiate() as Node3D
+			model.scale = Vector3.ONE * 0.002
+			warm.add_child(model)
+	for item in ItemDB.ORDER:
+		var gear := ItemDB.build_model(item)
+		gear.scale = Vector3.ONE * 0.002
+		warm.add_child(gear)
+
+	## A few frames, so the panes' cameras exist and have drawn everything at least once.
+	for _frame in 6:
+		await get_tree().process_frame
 	fire.queue_free()
 	bolt.queue_free()
+	warm.queue_free()
 
 
 func _build_environment() -> void:

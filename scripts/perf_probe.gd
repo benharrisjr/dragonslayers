@@ -87,7 +87,7 @@ func _report() -> void:
 
 func _count_of(type_name: String) -> int:
 	var count := 0
-	for node in get_tree().current_scene.get_children():
+	for node in GameWorld.effects_root(get_tree()).get_children():
 		if node.get_class() == "Node3D" and node.get_script() != null \
 				and node.get_script().get_global_name() == type_name:
 			count += 1

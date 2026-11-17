@@ -22,7 +22,7 @@ static func execute(caster: Combatant, ability: AbilityData, origin: Vector3,
 	var current_origin := caster.global_position
 	match ability.shape:
 		AbilityData.Shape.MELEE_ARC:
-			var facing := aim if aim.length_squared() > 0.001 else -caster.global_transform.basis.z
+			var facing := aim if aim.length_squared() > 0.001 else caster.facing()
 			var targets := CombatResolver.arc_targets(caster.get_tree(), caster, current_origin,
 					facing, ability)
 			CombatResolver.apply(ability, caster, targets, current_origin)

@@ -9,9 +9,16 @@ extends Node3D
 ## only thing crossing the wire is the seed.
 
 const PROP_CLEARANCE_TILES := 2
+## Placement attempts per tile per unit of a biome's prop_density. Cut to roughly a third of
+## what it was: the world read as littered, and open ground is what makes the ramps, mesas and
+## shoreline legible from a distance.
+const PROP_ATTEMPTS := 0.7
 
 var index: int = 0
 var biome: BiomeData
+## The chunk's ground. `heights` is its level array, kept as a shortcut for the many callers
+## that only want to know how high a tile is.
+var terrain: TerrainData
 var heights: PackedInt32Array
 
 var monsters: Array[Monster] = []
@@ -19,26 +26,43 @@ var chests: Array[TreasureChest] = []
 
 var _rng: RandomNumberGenerator
 var _occupied: Dictionary = {}
+## Host's running count of pickups spawned in this chunk; see _spawn_pickup.
+var _pickup_serial: int = 0
+## Every prop placed, in placement order -- the same order on every peer, so a prop's index
+## names it across the network. Each: {"node", "body", "burnable", "burnt"}.
+var _props: Array[Dictionary] = []
+
+## Scenery a lantern's fire burns away, matched on the start of the model's file name.
+const FLAMMABLE: Array[String] = [
+	"tree", "grass", "patch-grass", "resource-wood", "fence", "tent", "barrel", "stall",
+	"cart", "boat",
+]
 
 
-func build(chunk_index: int, biome_id: StringName, rng: RandomNumberGenerator) -> void:
+## `ctx` is WorldGenerator.context() for this cell: its ground level and its neighbours'.
+func build(chunk_index: int, biome_id: StringName, rng: RandomNumberGenerator,
+		ctx: Dictionary = {}) -> void:
 	index = chunk_index
 	biome = BiomeLibrary.get_biome(biome_id)
 	_rng = rng
 	name = "Chunk_%02d_%s" % [index, biome_id]
+	add_to_group("chunks")
 	position = WorldGenerator.chunk_origin(index)
 
-	heights = WorldGenerator.heightmap(biome, _rng)
+	terrain = WorldGenerator.heightmap(biome, _rng, ctx)
+	heights = terrain.heights
 	_build_terrain()
-	if biome.water_level >= 0:
-		_build_water()
+	if biome.id == &"beach":
+		_build_sea()
+	elif biome.water_level >= 0:
+		_build_lake()
 	_scatter_props()
 	_spawn_monsters()
 	_spawn_chests()
 
 
 func _build_terrain() -> void:
-	var mesh := ChunkMesher.build(heights, WorldGenerator.CHUNK_TILES, biome, _rng)
+	var mesh := ChunkMesher.build(terrain, biome, _rng)
 	var instance := MeshInstance3D.new()
 	instance.name = "Terrain"
 	instance.mesh = mesh
@@ -65,29 +89,53 @@ func _build_terrain() -> void:
 		add_child(void_floor)
 
 
-func _build_water() -> void:
+## The lake: a disc of ankle-deep water over ground that is level with the shore.
+func _build_lake() -> void:
+	var size := WorldGenerator.CHUNK_TILES * ChunkMesher.TILE_SIZE
+	var disc := CylinderMesh.new()
+	disc.top_radius = size * 0.5 * 0.55
+	disc.bottom_radius = disc.top_radius
+	disc.height = 0.02
+	disc.radial_segments = 48
+	disc.material = _water_material()
+	var instance := MeshInstance3D.new()
+	instance.name = "Water"
+	instance.mesh = disc
+	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	## Sits just above the lake bed so the bottom is visible through it rather than z-fighting.
+	instance.position = Vector3(size * 0.5,
+			ChunkMesher.height_to_world(terrain.base_level) + 0.35, size * 0.5)
+	add_child(instance)
+
+
+## The sea: one sheet at the water line across the whole chunk. The sand stands above it and
+## the sea bed slopes away beneath, so the shoreline is simply wherever the two cross.
+func _build_sea() -> void:
 	var size := WorldGenerator.CHUNK_TILES * ChunkMesher.TILE_SIZE
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(size, size)
+	plane.material = _water_material()
+	var instance := MeshInstance3D.new()
+	instance.name = "Water"
+	instance.mesh = plane
+	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	instance.position = Vector3(size * 0.5, WorldGenerator.SEA_SURFACE, size * 0.5)
+	add_child(instance)
+
+
+func _water_material() -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = Color(0.25, 0.5, 0.75, 0.65)
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.roughness = 0.15
-	plane.material = material
-	var instance := MeshInstance3D.new()
-	instance.name = "Water"
-	instance.mesh = plane
-	## Sits just above the lake floor so the bottom is visible through it rather than z-fighting.
-	instance.position = Vector3(size * 0.5,
-			ChunkMesher.height_to_world(biome.water_level) + 0.35, size * 0.5)
-	add_child(instance)
+	return material
 
 
 func _scatter_props() -> void:
 	if biome.props.is_empty():
 		return
 	var tiles := WorldGenerator.CHUNK_TILES
-	var attempts := int(tiles * tiles * biome.prop_density * 2.0)
+	var attempts := int(tiles * tiles * biome.prop_density * PROP_ATTEMPTS)
 	var total_weight := 0.0
 	for prop: Dictionary in biome.props:
 		total_weight += prop["weight"]
@@ -118,10 +166,14 @@ func _scatter_props() -> void:
 
 		var radius: float = prop["radius"]
 		Culling.apply_prop_range(node, radius)
+		var record := {"node": node, "body": null, "burnt": false,
+				"burnable": _is_flammable(prop["path"])}
+		_props.append(record)
 		if radius > 0.0:
 			## Trees and rocks are obstacles you can be knocked into, not scenery you walk
 			## through, so anything with a radius gets a real collider.
 			var body := StaticBody3D.new()
+			body.collision_layer = Combatant.LAYER_SCENERY
 			var shape := CollisionShape3D.new()
 			var cylinder := CylinderShape3D.new()
 			cylinder.radius = radius * 0.45
@@ -131,6 +183,7 @@ func _scatter_props() -> void:
 			body.add_child(shape)
 			body.position = node.position
 			container.add_child(body)
+			record["body"] = body
 
 
 func _spawn_monsters() -> void:
@@ -158,6 +211,7 @@ func _spawn_monsters() -> void:
 		_add_body_shape(monster, 0.45, 1.7)
 		container.add_child(monster)
 		monster.global_position = global_position + _tile_centre(x, z) + Vector3.UP * 0.4
+		monster.reset_physics_interpolation()
 		monster.configure(data)
 		monster.loot_dropped.connect(_on_monster_died)
 		monsters.append(monster)
@@ -180,13 +234,19 @@ func _spawn_chests() -> void:
 		var z := _rng.randi_range(3, WorldGenerator.CHUNK_TILES - 4)
 		if not _is_free(x, z):
 			continue
-		## One chest per chunk is large, and only in chunks that have more than one.
-		var large := placed == 0 and biome.chest_count > 1
+		## The first chest in every chunk is the large one, and it holds a piece of gear.
+		var large := placed == 0
+		## Gear must never be stranded: the large chest only goes on ground that can be walked
+		## to. The small ones may sit up on a mesa, where reaching them takes a jump.
+		if large and terrain.reach[z * WorldGenerator.CHUNK_TILES + x] == 0:
+			continue
 		var chest := TreasureChest.new()
 		chest.name = "Chest_%d_%02d" % [index, placed]
 		container.add_child(chest)
 		chest.position = _tile_centre(x, z)
 		chest.setup(large, _rng.randi_range(15, 30) * (3 if large else 1))
+		if large:
+			chest.item_id = ItemDB.chest_item(index, biome.id)
 		chest.opened.connect(_on_chest_opened)
 		chests.append(chest)
 		_mark_occupied(x, z)
@@ -205,6 +265,9 @@ func _on_chest_opened(chest: TreasureChest) -> void:
 	if not NetworkManager.is_host():
 		return
 	_spawn_loot(chest.global_position + Vector3.UP, chest.gold_value, chest.is_large)
+	if chest.item_id != &"":
+		## Set down in front of the chest rather than on it, clear of the coins.
+		drop_item(chest.item_id, chest.global_position + Vector3(0.0, 0.8, 1.6))
 
 
 ## Loot is spawned by the host and replicated, unlike everything else in the chunk: where a coin
@@ -218,28 +281,105 @@ func _spawn_loot(at: Vector3, gold: int, generous: bool) -> void:
 		_net_spawn_pickup(Pickup.Kind.HEART, Combatant.POINTS_PER_HEART, at + Vector3.RIGHT)
 
 
-func _net_spawn_pickup(kind: Pickup.Kind, value: int, at: Vector3) -> void:
+func _net_spawn_pickup(kind: Pickup.Kind, value: int, at: Vector3, from_pid: int = 0) -> void:
+	_pickup_serial += 1
 	if NetworkManager.is_networked():
-		_spawn_pickup.rpc(int(kind), value, at)
+		_spawn_pickup.rpc(int(kind), value, at, from_pid, _pickup_serial)
 	else:
-		_spawn_pickup(int(kind), value, at)
+		_spawn_pickup(int(kind), value, at, from_pid, _pickup_serial)
 
 
+## `serial` is the host's running count for this chunk and becomes the pickup's name. The host
+## later tells everyone a pickup was collected by addressing that node, so its name has to be
+## the same on every machine -- which an automatically generated one is not.
 @rpc("authority", "call_local", "reliable")
-func _spawn_pickup(kind: int, value: int, at: Vector3) -> void:
+func _spawn_pickup(kind: int, value: int, at: Vector3, from_pid: int = 0, serial: int = 0) -> void:
 	var pickup := Pickup.new()
+	if serial > 0:
+		pickup.name = "Pickup_%d" % serial
 	add_child(pickup)
 	pickup.setup(kind as Pickup.Kind, value, at)
+	pickup.dropped_by = from_pid
+
+
+## Host only: puts a piece of gear on the ground here. `from_pid` is the player who dropped it,
+## if it was dropped rather than found -- they have to wait a moment before taking it back.
+func drop_item(id: StringName, at: Vector3, from_pid: int = 0) -> void:
+	var number := ItemDB.ORDER.find(id)
+	if number >= 0:
+		_net_spawn_pickup(Pickup.Kind.ITEM, number, at, from_pid)
+
+
+static func _is_flammable(model_path: String) -> bool:
+	var file := model_path.get_file()
+	for prefix in FLAMMABLE:
+		if file.begins_with(prefix):
+			return true
+	return false
+
+
+## Host only: sets light to every flammable prop within reach of a fire.
+func burn_near(at: Vector3, reach: float) -> void:
+	if not NetworkManager.is_host():
+		return
+	for index in _props.size():
+		var record := _props[index]
+		if record["burnt"] or not record["burnable"]:
+			continue
+		var node := record["node"] as Node3D
+		var offset := node.global_position - at
+		if Vector2(offset.x, offset.z).length() <= reach + 0.6 and absf(offset.y) < 3.0:
+			if NetworkManager.is_networked():
+				_net_burn_prop.rpc(index)
+			else:
+				_net_burn_prop(index)
+
+
+## World positions of the flammable props still standing.
+func flammable_props() -> Array[Vector3]:
+	var found: Array[Vector3] = []
+	for record in _props:
+		if record["burnable"] and not record["burnt"]:
+			found.append((record["node"] as Node3D).global_position)
+	return found
+
+
+## A prop burns away on every peer: its collider goes at once, so the way it was blocking is
+## open, and what is left of it shrinks into the ground.
+@rpc("authority", "call_local", "reliable")
+func _net_burn_prop(index: int) -> void:
+	if index < 0 or index >= _props.size() or _props[index]["burnt"]:
+		return
+	var record := _props[index]
+	record["burnt"] = true
+	var body := record["body"] as Node
+	if body != null:
+		body.queue_free()
+	var node := record["node"] as Node3D
+	var tween := node.create_tween()
+	tween.tween_property(node, "scale", node.scale * Vector3(1.0, 0.02, 1.0), 0.9) \
+			.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+	tween.tween_callback(node.queue_free)
+
+
+## The chunk a world position falls in, or null outside the map.
+static func containing(tree: SceneTree, at: Vector3) -> Chunk:
+	for node in tree.get_nodes_in_group("chunks"):
+		var chunk := node as Chunk
+		var local := at - chunk.global_position
+		if local.x >= 0.0 and local.z >= 0.0 and local.x < WorldGenerator.CHUNK_SIZE \
+				and local.z < WorldGenerator.CHUNK_SIZE:
+			return chunk
+	return null
 
 
 # --- placement helpers -----------------------------------------------------------------------
 
 ## Local position of a tile's centre, sitting on its surface.
 func _tile_centre(x: int, z: int) -> Vector3:
-	var level := heights[z * WorldGenerator.CHUNK_TILES + x]
 	return Vector3(
 		(x + 0.5) * ChunkMesher.TILE_SIZE,
-		ChunkMesher.height_to_world(level),
+		terrain.surface_level(x, z) * ChunkMesher.STEP_HEIGHT,
 		(z + 0.5) * ChunkMesher.TILE_SIZE)
 
 
@@ -248,6 +388,14 @@ func _is_free(x: int, z: int) -> bool:
 	if level == ChunkMesher.HOLE:
 		return false
 	if _occupied.has(Vector2i(x, z)):
+		return false
+	var at := z * WorldGenerator.CHUNK_TILES + x
+	## Ramps and their landings stay clear, and nothing stands on a slope. Neither does anything
+	## go in the water -- a chest on the sea bed is a chest nobody finds.
+	if terrain.reserved[at] != 0 or terrain.slopes[at] != 0 or level < terrain.base_level:
+		return false
+	## The rim is every chunk's walkway to its neighbours; scenery on it is clutter in a doorway.
+	if terrain.rim(x, z) < WorldGenerator.BORDER:
 		return false
 	## Nothing stands on the boss platform. The fight is about reading a tell and moving, and a
 	## pine tree between you and the dragon is the difference between dodging a tail sweep and
@@ -319,15 +467,15 @@ func centre_tile_position() -> Vector3:
 	return global_position + _tile_centre(half, half)
 
 
-## Somewhere in this chunk a body can actually stand: not a pit, not a cliff edge, and nothing
-## already placed there. The occupancy check is the important one -- props carry colliders, and
+## Somewhere in this chunk a body can actually stand: not a pit, not a cliff edge, not up on a
+## mesa it could not walk down from, and nothing already placed there. The occupancy check is the important one -- props carry colliders, and
 ## a player dropped inside a tree is wedged in it, unable to move in any direction.
 func ground_spawn(rng: RandomNumberGenerator) -> Vector3:
 	var tiles := WorldGenerator.CHUNK_TILES
 	for _attempt in 128:
 		var x := rng.randi_range(4, tiles - 5)
 		var z := rng.randi_range(4, tiles - 5)
-		if _is_free(x, z):
+		if _is_free(x, z) and terrain.reach[z * tiles + x] != 0:
 			return global_position + _tile_centre(x, z) + Vector3.UP * 1.0
 	## Falling back to merely-solid ground is still better than returning a pit, but the search
 	## above has 128 tries on a 4096-tile chunk and reaching here means something is very wrong.

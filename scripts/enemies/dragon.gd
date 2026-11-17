@@ -306,6 +306,7 @@ func _net_reset(restored: int) -> void:
 	health_changed.emit(health, max_health)
 	phase_changed.emit(false)
 	global_position = Vector3(arena_centre.x, global_position.y, arena_centre.z)
+	reset_physics_interpolation()
 
 
 func _check_enrage() -> void:
@@ -464,7 +465,7 @@ func _lay_fire(forward: Vector3) -> void:
 @rpc("authority", "call_local", "reliable")
 func _net_fire(at: Vector3) -> void:
 	var patch := FirePatch.new()
-	get_tree().current_scene.add_child(patch)
+	GameWorld.effects_root(get_tree()).add_child(patch)
 	## Dropped onto the floor of the arena rather than wherever the dragon's origin happens to
 	## be, so a patch never hovers over the lip.
 	patch.ignite(Vector3(at.x, arena_centre.y, at.z), 2.6)
