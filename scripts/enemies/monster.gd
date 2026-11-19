@@ -35,6 +35,8 @@ var _attack_timer: float = 0.0
 var _state_timer: float = 0.0
 var _attack: AbilityData
 var _repath: float = 0.0
+## Seconds left unable to act. Counted on the host, which is the only machine that thinks.
+var _stun_left: float = 0.0
 ## Staggered so 40-odd skeletons do not all run their distance check on the same frame, which
 ## would turn a cheap test into a periodic spike -- exactly the stutter it is meant to remove.
 var _cull_timer: float = randf() * Culling.CHECK_INTERVAL
@@ -129,6 +131,14 @@ func _physics_process(delta: float) -> void:
 	## Clients apply gravity and knockback so a shoved skeleton visibly flies, but the decisions
 	## -- who to chase, when to swing -- belong to the host alone.
 	if not NetworkManager.is_host():
+		_slow_to_stop(delta)
+		clamp_speed()
+		move_and_slide()
+		return
+
+	if _stun_left > 0.0:
+		## Stunned: no chasing, no swinging. Whatever is dragging or throwing it carries on.
+		_stun_left = maxf(0.0, _stun_left - delta)
 		_slow_to_stop(delta)
 		clamp_speed()
 		move_and_slide()
@@ -253,6 +263,43 @@ func _begin_attack() -> void:
 func _show_attack() -> void:
 	if visual != null:
 		visual.play_action(data.attack_anim, 1.2)
+
+
+## Host only: stops this monster acting for `seconds`. A swing it was winding up is lost.
+func stun(seconds: float) -> void:
+	if is_dead or not NetworkManager.is_host() or seconds <= 0.0:
+		return
+	_stun_left = maxf(_stun_left, seconds)
+	if state == State.WIND_UP:
+		_enter(State.CHASE)
+	if NetworkManager.is_networked():
+		_net_show_stun.rpc(seconds)
+	else:
+		_net_show_stun(seconds)
+
+
+func is_stunned() -> bool:
+	return _stun_left > 0.0
+
+
+## A ring of yellow over its head on every peer, for as long as it lasts.
+@rpc("authority", "call_local", "reliable")
+func _net_show_stun(seconds: float) -> void:
+	if visual != null:
+		visual.play_action(data.hit_anim, 1.5)
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.28
+	ring.outer_radius = 0.38
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(1.0, 0.9, 0.25)
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var halo := MeshInstance3D.new()
+	halo.mesh = ring
+	halo.material_override = material
+	halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	halo.position.y = hit_height + 0.35
+	add_child(halo)
+	get_tree().create_timer(seconds).timeout.connect(halo.queue_free)
 
 
 func _pick_target() -> Combatant:

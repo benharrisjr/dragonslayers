@@ -252,15 +252,15 @@ func has_sfx(id: StringName) -> bool:
 
 ## Play a registered one-shot on the next pooled player (round-robin, so more
 ## than _SFX_POOL_SIZE overlapping sounds cut the oldest). Unknown ids are
-## skipped silently.
-func play_sfx(id: StringName, pitch: float = 1.0) -> void:
+## skipped silently. `gain_db` is added to the sound's baseline for this one play.
+func play_sfx(id: StringName, pitch: float = 1.0, gain_db: float = 0.0) -> void:
 	var stream: AudioStream = _sfx_streams.get(id)
 	if stream == null or _sfx_players.is_empty():
 		return
 	var player := _sfx_players[_sfx_pool_idx]
 	_sfx_pool_idx = (_sfx_pool_idx + 1) % _sfx_players.size()
 	player.stream = stream
-	player.volume_db = _sfx_db.get(id, 0.0)
+	player.volume_db = _sfx_db.get(id, 0.0) + gain_db
 	player.pitch_scale = maxf(pitch, 0.01)
 	player.play()
 

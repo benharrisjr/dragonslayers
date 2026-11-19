@@ -9,8 +9,10 @@ extends StaticBody3D
 signal opened(chest: TreasureChest)
 
 const MODEL_PATH := "res://art/kenney_survival-kit/Models/GLB format/chest.glb"
-const MODEL_SCALE := 2.4
-const INTERACT_RADIUS := 2.6
+## Twice the kit's natural fit for this world, so a chest reads from across a chunk.
+const SIZE := 2.0
+const MODEL_SCALE := 2.4 * SIZE
+const INTERACT_RADIUS := 3.8
 
 @export var is_large: bool = false
 
@@ -31,9 +33,9 @@ func setup(large: bool, value: int) -> void:
 
 	var shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(1.0, 0.7, 0.8) * (1.4 if large else 1.0)
+	box.size = Vector3(1.0, 0.7, 0.8) * SIZE * (1.4 if large else 1.0)
 	shape.shape = box
-	shape.position.y = 0.35
+	shape.position.y = box.size.y * 0.5
 	add_child(shape)
 
 
@@ -66,6 +68,7 @@ func _net_open() -> void:
 	if is_open:
 		return
 	is_open = true
+	GameSfx.play_at(&"chest", global_position)
 	if _lid != null:
 		var tween := create_tween()
 		tween.tween_property(_lid, "rotation_degrees:x", -100.0, 0.35) \
@@ -97,5 +100,5 @@ func _build_visual() -> void:
 	mesh.material = material
 	_prompt = MeshInstance3D.new()
 	_prompt.mesh = mesh
-	_prompt.position.y = 1.9
+	_prompt.position.y = 1.9 * SIZE
 	add_child(_prompt)

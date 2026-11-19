@@ -103,7 +103,7 @@ func _run() -> void:
 		await _settle(0.6)
 		_check("the gear chest opens", feather_chest.is_open)
 		## Walk onto what it dropped.
-		player.global_position = feather_chest.global_position + Vector3(0.0, 0.5, 1.6)
+		player.global_position = feather_chest.global_position + Vector3(0.0, 0.5, 2.4)
 		await _settle(0.6)
 		_check("walking over the feather picks it up", player.has_item(ItemDB.FEATHER))
 	if not player.has_item(ItemDB.FEATHER):
@@ -465,6 +465,8 @@ func _check_gear(player: PlayerCharacter, dummy: Monster) -> void:
 	_check("the fire goes out", not player.is_alight())
 	_check("and cost no health", player.health == alight_health)
 
+	await _check_new_gear(player)
+
 	# --- death ---
 	await _settle(0.8)
 	player.is_dead = false
@@ -476,7 +478,7 @@ func _check_gear(player: PlayerCharacter, dummy: Monster) -> void:
 	_check("a dead player keeps only the sword and shield",
 			player.gear == ([ItemDB.SWORD, ItemDB.SHIELD] as Array[StringName]), str(player.gear))
 	var loose := _loose_items()
-	_check("and everything else is left on the ground", loose.size() == loose_before + 4,
+	_check("and everything else is left on the ground", loose.size() == loose_before + 7,
 			"%d items lying about, %d before" % [loose.size(), loose_before])
 	## Back on their feet a few seconds later, standing right beside what they dropped.
 	await _settle(5.0)
@@ -516,10 +518,23 @@ func _stand_off(player: PlayerCharacter, target: Vector3, distance: float) -> Ve
 		if ground.is_empty() or absf((ground["position"] as Vector3).y - target.y) > 0.3:
 			continue
 		var standing: Vector3 = ground["position"]
+		## Not inside a tree or a rock: those are on their own layer and a ray that starts
+		## inside one does not see it.
+		var inside := PhysicsPointQueryParameters3D.new()
+		inside.position = standing + Vector3.UP * 0.85
+		inside.collision_mask = Combatant.LAYER_SCENERY
+		var blocked := false
+		for offset: Vector3 in [Vector3.ZERO, Vector3(0.6, 0, 0), Vector3(-0.6, 0, 0),
+				Vector3(0, 0, 0.6), Vector3(0, 0, -0.6)]:
+			inside.position = standing + Vector3.UP * 0.85 + offset
+			if not space.intersect_point(inside, 1).is_empty():
+				blocked = true
+		if blocked:
+			continue
 		## The line has to reach the target itself, not a tree on the way.
 		var sight := PhysicsRayQueryParameters3D.create(
 				standing + Vector3.UP * 0.85, target + Vector3.UP * 0.4)
-		sight.collision_mask = Combatant.LAYER_WORLD
+		sight.collision_mask = Combatant.LAYER_WORLD | Combatant.LAYER_SCENERY
 		var seen := space.intersect_ray(sight)
 		if not seen.is_empty() and seen["collider"] is TreasureChest:
 			return standing
@@ -787,6 +802,159 @@ func _off_platform(player: PlayerCharacter, dragon: Dragon) -> bool:
 			or player.global_position.y < dragon.arena_centre.y - 5.0
 
 
+## Power glove, the shop, the bug net and the fan, played through the real controls where there
+## is a control to press.
+func _check_new_gear(player: PlayerCharacter) -> void:
+	var world := main.world as GameWorld
+	await _settle(0.6)
+	player.visual.stop_action()
+	player.targeting.set_target(null)
+
+	# --- shop ---
+	var town := world.chunk_of_biome(&"town")
+	_check("the town has a shop", town != null and town.shop != null)
+	if town != null and town.shop != null:
+		player.global_position = town.shop.global_position + Vector3(0.0, 0.4, 3.6)
+		player.velocity = Vector3.ZERO
+		player.reset_physics_interpolation()
+		await _settle(0.5)
+		Input.action_press("p0_interact")
+		await _settle(0.1)
+		Input.action_release("p0_interact")
+		await _settle(0.2)
+		_check("interact at the stall opens the shop", player.shop_open)
+		var stood := player.global_position
+		Input.action_press("p0_up")
+		await _settle(0.3)
+		Input.action_release("p0_up")
+		_check("the shopper stays put while it is open",
+				_flat_distance(player.global_position, stood) < 0.3)
+		## The net is first on the list and free.
+		## A real key event rather than a forced action: the panel reads its buttons once per
+		## drawn frame, and only an event that came through the input queue is seen there.
+		_parse_key(KEY_SPACE, true)
+		await _settle(0.1)
+		_parse_key(KEY_SPACE, false)
+		await _settle(0.2)
+		_check("the buy button buys the free net", player.has_item(ItemDB.NET))
+		_check("and buying is not jumping", player.is_on_floor())
+		Input.action_press("p0_interact")
+		await _settle(0.1)
+		Input.action_release("p0_interact")
+		await _settle(0.2)
+		_check("interact again leaves the shop", not player.shop_open)
+
+	# --- bug net ---
+	_check("the town has bugs", town != null and town.bugs != null and town.bugs.count() > 0)
+	if town != null and town.bugs != null and town.bugs.count() > 0:
+		player.equip(ItemDB.NET)
+		var before := player.bugs
+		for _try in 6:
+			if player.bugs > before:
+				break
+			## Stand under the bug, a step back, facing it; it will have moved on a little by
+			## the time the net comes round, which is what the net's reach is for.
+			var bug := town.bugs.bug_position(0)
+			player.global_position = Vector3(bug.x, player.global_position.y + 0.2, bug.z - 1.0)
+			player.rotation.y = 0.0
+			player.velocity = Vector3.ZERO
+			player.reset_physics_interpolation()
+			await _settle(0.15)
+			Input.action_press("p0_item_3")
+			await _settle(0.1)
+			Input.action_release("p0_item_3")
+			await _settle(0.6)
+		_check("the usable button swings the net and catches a bug", player.bugs > before,
+				"%d bugs" % player.bugs)
+
+	# --- power glove ---
+	var rock := Vector3.INF
+	for chunk in world.chunks:
+		for at in chunk.liftable_props():
+			if at.distance_to(player.global_position) < rock.distance_to(player.global_position):
+				rock = at
+	_check("the world has a rock to lift", rock != Vector3.INF)
+	if rock != Vector3.INF:
+		player.add_item(ItemDB.GLOVE)
+		player.equip(ItemDB.GLOVE)
+		var rock_chunk := Chunk.containing(get_tree(), rock)
+		var rocks_before := rock_chunk.liftable_props().size()
+		var beside := Vector3.ZERO
+		## Whichever side of it is open ground at its own height.
+		for side in [Vector3(0, 0, 1), Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(-1, 0, 0)]:
+			beside = side
+			var spot: Vector3 = rock + side * 3.2
+			var probe := PhysicsRayQueryParameters3D.create(
+					spot + Vector3.UP * 3.0, spot + Vector3.DOWN * 3.0)
+			probe.collision_mask = Combatant.LAYER_WORLD | Combatant.LAYER_SCENERY
+			var ground := player.get_world_3d().direct_space_state.intersect_ray(probe)
+			if not ground.is_empty() and absf((ground["position"] as Vector3).y - rock.y) < 0.4:
+				break
+		player.global_position = rock + beside * 3.2 + Vector3.UP * 0.4
+		player.rotation.y = atan2(-beside.x, -beside.z)
+		player.velocity = Vector3.ZERO
+		player.reset_physics_interpolation()
+		await _settle(0.5)
+		Input.action_press("p0_item_3")
+		await _settle(0.1)
+		Input.action_release("p0_item_3")
+		await _settle(0.2)
+		_check("the usable button lifts the rock in front", player.carried != null)
+		_check("and it is gone from the ground",
+				rock_chunk.liftable_props().size() == rocks_before - 1)
+		Input.action_press("p0_dash")
+		await _settle(0.1)
+		Input.action_release("p0_dash")
+		_check("nobody dashes with a rock overhead", player._dash_time <= 0.0)
+		await _settle(0.8)
+		Input.action_press("p0_item_3")
+		await _settle(0.1)
+		Input.action_release("p0_item_3")
+		await _settle(0.15)
+		_check("pressing it again throws the rock", player.carried == null
+				and _count_of("ThrownRock") > 0)
+		var waited := 0.0
+		var broke := false
+		while waited < 3.0 and not broke:
+			await _settle(0.1)
+			waited += 0.1
+			broke = _count_of("RockShards") > 0
+		_check("and it shatters where it lands", broke and _count_of("ThrownRock") == 0)
+
+	# --- fan ---
+	await _settle(0.6)
+	player.visual.stop_action()
+	player.add_item(ItemDB.FAN)
+	player.equip(ItemDB.FAN)
+	Input.action_press("p0_item_3")
+	await _settle(0.1)
+	Input.action_release("p0_item_3")
+	_check("the usable button waves the fan", _count_of("Gust") > 0
+			and not player.item_ready(ItemDB.FAN))
+	## Back to town for what follows.
+	if town != null:
+		player.global_position = town.ground_spawn(GameState.chunk_rng(31))
+		player.velocity = Vector3.ZERO
+		player.reset_physics_interpolation()
+	await _settle(0.8)
+
+
+func _parse_key(keycode: Key, pressed: bool) -> void:
+	var event := InputEventKey.new()
+	event.physical_keycode = keycode
+	event.pressed = pressed
+	Input.parse_input_event(event)
+
+
+func _count_of(kind: String) -> int:
+	var count := 0
+	for node in main.get_children():
+		if (kind == "ThrownRock" and node is ThrownRock) or (kind == "RockShards" and node is RockShards) \
+				or (kind == "Gust" and node is Gust):
+			count += 1
+	return count
+
+
 func _finish() -> void:
 	print("\n%d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(1 if _failed > 0 else 0)
@@ -817,6 +985,19 @@ func _clear_line_position(player: PlayerCharacter, distance: float,
 		if ground.is_empty():
 			continue
 		var standing: Vector3 = ground["position"]
+		## Not inside a tree or a rock: those are on their own layer and a ray that starts
+		## inside one does not see it.
+		var inside := PhysicsPointQueryParameters3D.new()
+		inside.position = standing + Vector3.UP * 0.85
+		inside.collision_mask = Combatant.LAYER_SCENERY
+		var blocked := false
+		for offset: Vector3 in [Vector3.ZERO, Vector3(0.6, 0, 0), Vector3(-0.6, 0, 0),
+				Vector3(0, 0, 0.6), Vector3(0, 0, -0.6)]:
+			inside.position = standing + Vector3.UP * 0.85 + offset
+			if not space.intersect_point(inside, 1).is_empty():
+				blocked = true
+		if blocked:
+			continue
 		if level_only and absf(standing.y - player.global_position.y) > 0.3:
 			continue
 

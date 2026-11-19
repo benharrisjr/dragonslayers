@@ -46,18 +46,36 @@ turns those claims into each player's input actions at runtime.
 | | Keyboard and mouse | Gamepad |
 |---|---|---|
 | Move | `WASD` / arrows | left stick |
-| Hotkey 1 / 2 / 3 | left mouse or `J` / `K` / `L` | `X` / `Y` / `B` |
+| Sword | left mouse or `J` | `X` |
+| Shield (hold) | `K` | `Y` |
+| Equipped usable (hookshot, lantern, power glove, bug net or fan) | right mouse or `L` | `B` |
 | Jump (needs the feather) | `Space` | `A` |
 | Dash (needs the boots) | `Shift` | `RT` |
 | Gear panel | `I` | `Select` |
+| Gear wheel (quick-pick a usable) | hold `R`, `Q` / `E` to choose, let go of `R` | hold `LT`, point the right stick, let it go |
 | Target | click an enemy, or `Tab` / `Backspace` to cycle | `RB` / `LB` cycle |
-| Interact (chests) | `F` | d-pad up |
-| Turn camera | `Q` / `E`, or hold **right mouse** and drag | right stick (also tilts) |
+| Interact (chests, the shop) | `F` | d-pad up |
+| Turn camera | `Q` / `E`, or hold `Space` and drag with **right mouse** | right stick (also tilts) |
+| Map | `M` | -- |
+| Mute / unmute microphone (online) | `V` | -- |
 | Pause / options | `Esc` | `Start` |
 
-The gear panel belongs to one player and opens in their own pane: stick left and right picks
-an item, pressing a hotkey button puts it on that button, and the same button closes the
-panel. Only that player stops moving while it is open.
+The gear panel belongs to one player and opens in their own pane. It has two sections: usable
+equipment (hookshot, lantern, power glove, bug net, fan), of which one is equipped on the third button, and static
+equipment (boots, feather, mirror), which simply works. Stick left and right picks an item, any action
+button equips a usable, and Select / `I` closes the panel. Only that player stops moving while
+it is open. The three icons in the top right of each pane show the sword, the shield and the
+equipped usable, each with its button; they are drawn in code (`scripts/ui/item_icon.gd`).
+
+The gear wheel is the quick way to swap usables without the panel. Hold `LT` and push the right
+stick: a ring comes up with one fixed slice per usable (the hookshot is always at the top) and
+the stick points at one. Let the stick spring back and, 100 ms after it is back in its dead
+zone, the slice it was pointing at as it was let go is equipped and the ring closes. There is no
+confirm button. Letting go of `LT` first equips too. Without `LT` the right stick turns the
+camera as usual, and the left stick walks the whole time. On a keyboard, hold `R`, step round
+the ring with `Q` / `E`, and let go of `R` to equip. A slice for something not found yet is
+greyed; landing on it changes nothing
+(`scripts/ui/gear_wheel.gd`).
 
 In menus the gamepad drives the template's pointing hand: d-pad moves it between buttons, `A`
 presses, `B` backs out, and the left stick moves a free cursor. During play that cursor is
@@ -68,12 +86,13 @@ Gameplay controls are not yet rebindable from Options > Keybindings; that screen
 menu actions. Select used to be the template's Report Bug button on a gamepad; it is the gear
 panel now, and `F7` still opens the report form.
 
-Holding right mouse captures the pointer and turns the camera freely — horizontally it does
+Holding Space and right mouse captures the pointer and turns the camera freely — horizontally it does
 exactly what Q and E do, and vertically it tilts within a bounded range of whatever framing is
 active, so a drag never undoes the boss pull-back and never drops the view so low that the ledge
 you are about to be knocked off stops being visible.
 
-Clicking an enemy both targets it and swings, so click-targeting never costs you a turn.
+Clicking an enemy both targets it and swings, so click-targeting never costs you a turn; a
+click that lands on nothing leaves the current target alone.
 There is only one mouse, so gamepad players cycle targets with the bumpers instead — and any
 attack with no target selected aims at whatever is roughly in front of you.
 
@@ -86,16 +105,40 @@ attack with no target selected aims at whatever is roughly in front of you.
 
   | Item | How it is used | What it does |
   |---|---|---|
-  | Sword | hotkey | A melee swing. Everyone starts with one and keeps it. |
-  | Shield | hotkey, held | Blocks hits from the front: no damage, a third of the shove. Kept. |
-  | Hookshot | hotkey | Fires a hook 14 m. It pulls you to anything that does not move (walls, trees, rocks, chests, the dragon) and pulls anything that does (monsters, other players) to you. |
-  | Lantern | hotkey | Drops a patch of fire that burns monsters and flammable scenery -- trees, grass, fences, crates -- and leaves the party alone. |
-  | Feather | passive | Lets you jump. Without it the jump button does nothing. |
-  | Boots | passive | Lets you dash. |
+  | Sword | own button | A melee swing. Everyone starts with one and keeps it. |
+  | Shield | own button, held | Blocks hits from the front: no damage, a third of the shove. Kept. |
+  | Hookshot | usable | Fires a hook 14 m. It pulls you to anything that does not move (walls, trees, rocks, chests, the dragon) and pulls anything that does (monsters, other players) to you. |
+  | Lantern | usable | Drops a patch of fire that burns monsters and flammable scenery -- trees, grass, fences, crates -- and leaves the party alone. |
+  | Power Glove | usable | Lifts the rock in front of you; press again (or attack) to throw it. A thrown rock shatters where it lands, and whatever it lands on -- monster or fellow player, but not the thrower -- takes 1.5 hearts and is thrown back. |
+  | Bug Net | usable | Swing it at the bugs flying about to catch them. |
+  | Fan | usable | A gust that shoves back everyone in front of you, friend or foe, without hurting them. |
+  | Feather | static | Lets you jump. Without it the jump button does nothing. |
+  | Boots | static | Lets you dash. |
+  | Mirror | static | Online, your voice reaches anyone else holding a mirror at full volume, however far apart you are. Shop only. |
 
-  There are three hotkeys and four items that want one, so what to keep ready is a choice.
+  The usables share one button, so which to keep ready is a choice made in the gear panel.
+  A monster the hookshot bites is stunned for 0.3 s: it cannot move or swing, and a swing it
+  was winding up is lost.
+- **Bugs and the shop.** Bugs fly about every chunk but the mountain (most in fields and
+  forest) and come back a while after being caught. They are each player's own, and are kept
+  through death. The stall in the middle of town (`F` / d-pad up beside it) trades them for
+  gear: the bug net is free, a heart container or a mirror is 3 bugs, and the rest cost 4 to 6
+  (`ItemDB.SHOP_STOCK`). Left / right chooses, jump or any attack button buys, interact leaves.
+- **Heart containers** add one heart for good (up to eight) and fill the bar. They are in the
+  shop and in some large chests.
+- **Voice chat** (`scripts/audio/voice_chat.gd`) runs in online matches. Each machine's
+  microphone speaks for its first player, from where that player stands: full volume within
+  8 m of the nearest player on the listening machine, fading to nothing at 40 m, and not
+  transmitted at all to machines out of earshot. Two players who each hold a **mirror** hear
+  each other at full volume anywhere. `V` mutes the microphone; a note appears over whoever is
+  talking. The first run asks the OS for microphone permission.
+- **Sound effects** fall off with distance: full volume within 6 m of the nearest player on
+  this machine, fading to silence at 38 m. They are placeholders synthesised at start-up (`scripts/audio/game_sfx.gd`):
+  each is a short recipe of swept tones and filtered noise. To replace one, register a real
+  recording under the same id with `SoundManager.register_sfx` after `GameSfx.register()`.
 - **Finding gear.** The first chest in every chunk is the large one and holds one item. The
-  town's always holds a feather; the rest take turns, so a map has a few of each. A player who
+  town's always holds a feather; the rest take turns through all eight finds, so a map has one
+  or two of each. A player who
   already has an item walks past a second one and leaves it for a friend.
 - **Dying** is a setback, not an elimination: you come back after a few seconds on half
   health. But everything except your sword and shield is left on the ground where you fell,
@@ -217,6 +260,19 @@ Animation is not baked into the .glb: `DragonAnimator` holds the clips as keyfra
 evaluates them straight onto bone poses. With no authored clips to import there is nothing to
 match track paths against, and an attack's damage has to land on the frame its animation looks
 like it lands — a table of times in one file is where that gets tuned.
+
+## Picture
+
+- **Resolution.** The game is laid out on a 1920x1080 canvas (`display/window/size/viewport_*`,
+  stretch mode `canvas_items`, aspect `expand`). Each split-screen pane is a SubViewport sized in
+  that canvas, so the 3D is drawn at 1920x1080 for one player (1920x540 each for two, 960x540
+  each for four) and then scaled to the real window. A smaller window is supersampled; a 4K
+  screen is upscaled from 1080p. A window that isn't 16:9 widens or heightens the canvas
+  instead of letterboxing it.
+- **Anti-aliasing.** 4x MSAA per pane (2x on the low graphics tier), set in
+  `scripts/ui/split_screen.gd`. The Compatibility renderer has no FXAA or TAA.
+- **Colour grade.** The world environment boosts saturation (1.3) and contrast (1.06) after
+  tonemapping: `SATURATION` and `CONTRAST` in `scripts/world/game_world.gd`.
 
 ## Performance
 

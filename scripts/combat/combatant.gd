@@ -143,6 +143,12 @@ func _sent_by_host() -> bool:
 	return sender == 0 or sender == 1
 
 
+## Unable to act for the moment. Only monsters can be; an ability that was winding up when its
+## caster was stunned does not go off (AbilityRunner).
+func is_stunned() -> bool:
+	return false
+
+
 ## The point attacks aim at and measure to: mid-body, not underfoot.
 func hit_centre() -> Vector3:
 	return global_position + Vector3.UP * (hit_height * 0.5)

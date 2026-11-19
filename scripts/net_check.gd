@@ -31,6 +31,13 @@ func _process(delta: float) -> void:
 	if not _prodded and _elapsed > report_delay - 2.5 and NetworkManager.is_host():
 		_prodded = true
 		_prod_players()
+	## Every machine "speaks" once a second -- a test tone straight into the voice chat's send
+	## path, since a headless run has no microphone -- so the reports show whose voice arrived.
+	if _elapsed > 5.0 and int(_elapsed) != int(_elapsed - delta):
+		var tone := PackedFloat32Array()
+		for index in 480:
+			tone.append(sin(index * 0.2) * 0.4)
+		(main.voice as VoiceChat)._send(tone)
 	if _elapsed < report_delay:
 		return
 	_done = true
@@ -59,6 +66,7 @@ func _report() -> void:
 		role, GameState.world_seed, PlayerRegistry.roster.size(),
 		PlayerRegistry.bodies.size(), monsters, chests,
 		"yes" if world.dragon != null else "no", fingerprint])
+	print("   %s heard voices from machines %s" % [role, (main.voice as VoiceChat)._voices.keys()])
 	for pid in PlayerRegistry.all_pids():
 		var body := PlayerRegistry.body_of(pid) as PlayerCharacter
 		if body == null:

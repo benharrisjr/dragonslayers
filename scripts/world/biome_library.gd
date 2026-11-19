@@ -27,71 +27,56 @@ static func all_ids() -> Array:
 
 static func _build() -> void:
 	_add(&"town", "Town", Color(0.46, 0.55, 0.34), Color(0.55, 0.5, 0.42), {
-		"height_levels": 0, "mesa_threshold": 1.0, "prop_density": 0.055,
+		"height_levels": 0, "mesa_threshold": 1.0, "prop_density": 0.01,
 		"monster_ids": [], "monster_count": 0, "chest_count": 1,
 		"props": [
-			_prop("kenney_fantasy-town-kit_2", "watermill", 0.6, 1.6, 2.4),
-			_prop("kenney_fantasy-town-kit_2", "windmill", 0.5, 1.6, 2.4),
-			_prop("kenney_fantasy-town-kit_2", "stall-red", 1.3, 1.5, 1.4),
-			_prop("kenney_fantasy-town-kit_2", "stall-green", 1.3, 1.5, 1.4),
-			_prop("kenney_fantasy-town-kit_2", "cart", 1.0, 1.5, 1.2),
-			_prop("kenney_castle-kit", "tower-square", 0.5, 1.5, 2.0),
 			_prop("kenney_fantasy-town-kit_2", "tree", 1.4, 1.4, 1.2),
-			_prop("kenney_fantasy-town-kit_2", "fountain-round", 0.4, 1.6, 2.0),
-			_prop("kenney_fantasy-town-kit_2", "lantern", 1.0, 1.5, 0.4),
 		],
 	})
 	_add(&"plains", "Plains", Color(0.42, 0.66, 0.28), Color(0.5, 0.42, 0.3), {
-		"height_levels": 2, "mesa_threshold": 0.68, "prop_density": 0.035,
+		"height_levels": 2, "mesa_threshold": 0.68, "prop_density": 0.023,
 		"monster_ids": [&"skeleton_minion", &"skeleton_rogue"], "monster_count": 16,
 		"chest_count": 1,
 		"props": [
 			_prop("kenney_survival-kit", "tree", 1.6, 2.4, 1.1),
 			_prop("kenney_survival-kit", "rock-a", 1.2, 2.2, 0.9),
 			_prop("kenney_survival-kit", "rock-b", 1.0, 2.2, 0.9),
-			_prop("kenney_survival-kit", "grass-large", 2.0, 2.0, 0.0),
 		],
 	})
 	_add(&"fields", "Fields", Color(0.62, 0.68, 0.26), Color(0.52, 0.44, 0.3), {
-		"height_levels": 1, "mesa_threshold": 0.74, "prop_density": 0.045,
+		"height_levels": 1, "mesa_threshold": 0.74, "prop_density": 0.008,
 		"monster_ids": [&"skeleton_minion"], "monster_count": 11, "chest_count": 2,
 		"props": [
-			_prop("kenney_survival-kit", "patch-grass-large", 2.4, 2.2, 0.0),
-			_prop("kenney_fantasy-town-kit_2", "fence", 1.2, 1.5, 0.5),
 			_prop("kenney_survival-kit", "tree-autumn", 1.0, 2.2, 1.1),
-			_prop("kenney_survival-kit", "resource-wood", 0.8, 2.0, 0.6),
 		],
 	})
 	_add(&"forest", "Forest", Color(0.24, 0.48, 0.24), Color(0.38, 0.32, 0.24), {
-		"height_levels": 2, "mesa_threshold": 0.66, "prop_density": 0.13,
+		"height_levels": 2, "mesa_threshold": 0.66, "prop_density": 0.118,
 		"monster_ids": [&"skeleton_rogue", &"skeleton_minion"], "monster_count": 20,
 		"chest_count": 2,
 		"props": [
 			_prop("kenney_survival-kit", "tree-tall", 3.0, 2.6, 1.2),
 			_prop("kenney_survival-kit", "tree", 2.6, 2.4, 1.1),
 			_prop("kenney_survival-kit", "tree-autumn-tall", 1.4, 2.4, 1.2),
-			_prop("kenney_survival-kit", "tree-log", 0.8, 2.2, 0.9),
 			_prop("kenney_survival-kit", "rock-c", 0.8, 2.2, 0.9),
 		],
 	})
 	_add(&"desert", "Desert", Color(0.82, 0.72, 0.42), Color(0.7, 0.56, 0.34), {
-		"height_levels": 2, "mesa_threshold": 0.66, "pit_count": 1, "prop_density": 0.03,
+		"height_levels": 2, "mesa_threshold": 0.66, "pit_count": 1, "prop_density": 0.026,
 		"monster_ids": [&"skeleton_warrior", &"skeleton_minion"], "monster_count": 18,
 		"chest_count": 2,
 		"props": [
 			_prop("kenney_survival-kit", "rock-sand-a", 1.6, 2.4, 1.0),
 			_prop("kenney_survival-kit", "rock-sand-b", 1.4, 2.4, 1.0),
 			_prop("kenney_survival-kit", "rock-sand-c", 1.2, 2.4, 1.0),
-			_prop("kenney_graveyard-kit_5", "pillar-obelisk", 0.7, 1.6, 0.8),
 		],
 	})
 	_add(&"lake", "Lake", Color(0.46, 0.62, 0.36), Color(0.44, 0.4, 0.34), {
-		"height_levels": 1, "mesa_threshold": 0.76, "water_level": 0, "prop_density": 0.05,
+		"height_levels": 1, "mesa_threshold": 0.76, "water_level": 0, "prop_density": 0.043,
 		"monster_ids": [&"skeleton_minion"], "monster_count": 11, "chest_count": 2,
 		"props": [
 			_prop("kenney_survival-kit", "tree", 1.4, 2.3, 1.1),
 			_prop("kenney_survival-kit", "rock-flat-grass", 1.6, 2.4, 0.9),
-			_prop("kenney_watercraft-pack", "boat-row-small", 0.5, 1.4, 1.2),
 		],
 	})
 	_add(&"temple", "Temple", Color(0.55, 0.53, 0.48), Color(0.48, 0.46, 0.44), {
@@ -99,26 +84,18 @@ static func _build() -> void:
 		"monster_ids": [&"skeleton_warrior", &"skeleton_mage", &"skeleton_rogue"],
 		"monster_count": 20, "chest_count": 3,
 		"props": [
-			_prop("kenney_graveyard-kit_5", "pillar-large", 1.8, 1.7, 0.9),
-			_prop("kenney_graveyard-kit_5", "pillar-small", 1.2, 1.7, 0.8),
-			_prop("kenney_castle-kit", "wall", 1.0, 1.6, 1.0),
-			_prop("kenney_graveyard-kit_5", "gravestone-cross", 1.0, 1.6, 0.5),
-			_prop("kenney_graveyard-kit_5", "urn-round", 0.8, 1.6, 0.5),
 		],
 	})
 	## Sea level: dry sand on the landward side, sloping under the water towards the open sea.
-	## Deliberately quiet -- a few rocks and boats, a handful of skeletons -- so it reads as
+	## Deliberately quiet -- a few rocks, a handful of skeletons -- so it reads as
 	## somewhere to arrive at rather than another field to fight across.
 	_add(&"beach", "Beach", Color(0.74, 0.65, 0.42), Color(0.6, 0.5, 0.32), {
-		"height_levels": 0, "mesa_threshold": 1.0, "prop_density": 0.02,
+		"height_levels": 0, "mesa_threshold": 1.0, "prop_density": 0.011,
 		"low_color": Color(0.5, 0.5, 0.36),
 		"monster_ids": [&"skeleton_minion"], "monster_count": 6, "chest_count": 2,
 		"props": [
 			_prop("kenney_survival-kit", "rock-sand-a", 1.2, 2.2, 1.0),
 			_prop("kenney_survival-kit", "rock-sand-b", 1.0, 2.2, 1.0),
-			_prop("kenney_watercraft-pack", "boat-row-small", 0.8, 1.4, 1.2),
-			_prop("kenney_survival-kit", "barrel", 0.6, 1.8, 0.5),
-			_prop("kenney_survival-kit", "tent", 0.4, 1.8, 1.2),
 		],
 	})
 	## The mountain is terraces round a summit platform, and it is where the dragon waits.
@@ -165,11 +142,20 @@ static func _add(id: StringName, name: String, ground: Color, cliff: Color,
 
 ## Kenney kits are authored on a ~1 unit grid while this world runs at 1 unit = 1 metre, so
 ## props carry their own scale multiplier rather than being uniformly fudged.
+##
+## Scenery is trees and rocks only, and both are drawn big: the numbers in the tables above are
+## the kits' natural sizes, and TREE_SIZE / ROCK_SIZE are applied on top, to the collider as well.
+const TREE_SIZE := 3.0
+const ROCK_SIZE := 2.5
+
+
 static func _prop(kit: String, model: String, weight: float, scale: float,
 		radius: float) -> Dictionary:
+	var size := TREE_SIZE if model.begins_with("tree") else ROCK_SIZE
 	return {
 		"path": "%s%s/Models/GLB format/%s.glb" % [PROP_ROOT, kit, model],
 		"weight": weight,
-		"scale": scale,
-		"radius": radius,
+		"scale": scale * size,
+		"radius": radius * size,
+		"size": size,
 	}

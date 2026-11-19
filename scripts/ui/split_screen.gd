@@ -51,7 +51,10 @@ func build(pids: Array[int]) -> void:
 		## than an empty one of its own.
 		viewport.own_world_3d = false
 		viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-		viewport.msaa_3d = Viewport.MSAA_2X
+		## Each pane is its own viewport, so the project's MSAA setting does not reach it. 4x
+		## smooths the terrain's cliff edges and the props' silhouettes; the low tier keeps 2x.
+		## (FXAA and TAA are not available in the Compatibility renderer.)
+		viewport.msaa_3d = Viewport.MSAA_2X if GraphicsQuality.is_low() else Viewport.MSAA_4X
 		container.add_child(viewport)
 
 		var camera := PlayerCamera.new()
@@ -125,11 +128,12 @@ func _gui_input(event: InputEvent) -> void:
 					click.position - panes[index].position)
 		return
 
-	## Right-button drag turns the camera freely -- the mouse equivalent of holding Q or E.
-	## Started here rather than in _input so that Godot's own hit-testing decides which pane the
-	## drag belongs to, in this control's coordinates, instead of rect maths against raw screen
-	## positions that still carry the viewport's transform.
-	if click.button_index == MOUSE_BUTTON_RIGHT:
+	## Space + right-button drag turns the camera freely -- the mouse equivalent of holding Q or
+	## E. Without Space the right button is the equipped usable, which the player reads as an
+	## action. Started here rather than in _input so that Godot's own hit-testing decides which
+	## pane the drag belongs to, in this control's coordinates, instead of rect maths against
+	## raw screen positions that still carry the viewport's transform.
+	if click.button_index == MOUSE_BUTTON_RIGHT and Input.is_physical_key_pressed(KEY_SPACE):
 		begin_look(index)
 		accept_event()
 
@@ -160,11 +164,13 @@ func begin_look(pane_index: int) -> void:
 	if pane_index < 0 or pane_index >= cameras.size():
 		return
 	_look_pane = pane_index
+	PlayerInput.mouse_looking = true
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func end_look() -> void:
 	_look_pane = -1
+	PlayerInput.mouse_looking = false
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
@@ -185,6 +191,7 @@ func _clear() -> void:
 	## no cursor and no way to get it back.
 	if _look_pane >= 0:
 		_look_pane = -1
+		PlayerInput.mouse_looking = false
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	for child in get_children():
 		child.queue_free()

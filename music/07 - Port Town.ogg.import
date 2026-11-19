@@ -1,0 +1,19 @@
+[remap]
+
+importer="oggvorbisstr"
+type="AudioStreamOggVorbis"
+uid="uid://x772jhsx0wrh"
+path="res://.godot/imported/07 - Port Town.ogg-afaa3e3d2f1fd8ebe802c0c5cec6ff84.oggvorbisstr"
+
+[deps]
+
+source_file="res://music/07 - Port Town.ogg"
+dest_files=["res://.godot/imported/07 - Port Town.ogg-afaa3e3d2f1fd8ebe802c0c5cec6ff84.oggvorbisstr"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

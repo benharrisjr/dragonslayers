@@ -14,7 +14,7 @@ static func execute(caster: Combatant, ability: AbilityData, origin: Vector3,
 		return
 	if ability.wind_up > 0.0:
 		await caster.get_tree().create_timer(ability.wind_up).timeout
-	if not is_instance_valid(caster) or caster.is_dead:
+	if not is_instance_valid(caster) or caster.is_dead or caster.is_stunned():
 		return
 
 	## Re-read the caster's position after the wind-up: it may have been knocked halfway across

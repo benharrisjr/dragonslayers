@@ -64,11 +64,21 @@ func _run() -> void:
 	main.lobby.show_step(LobbyScreen.Step.MODE)
 	await _wait(0.3)
 
-	## Lobby, mode step: "Local game" is first.
+	## Lobby, mode step: the D-pad walks the hand down the buttons and back.
+	var local_button: Control = (main.lobby._first_focus[LobbyScreen.Step.MODE] as PanelButton).get_focus_target()
+	PadCursor.point_at(local_button)
+	await get_tree().process_frame
+	await _tap(JOY_BUTTON_DPAD_DOWN)
+	var below := PadCursor.get_snapped()
+	_expect(below != null and below != local_button and main.lobby.is_ancestor_of(below),
+			"D-pad down moves the hand to the next lobby button")
+	await _tap(JOY_BUTTON_DPAD_UP)
+	_expect(PadCursor.get_snapped() == local_button, "D-pad up brings it back")
+
 	_expect(await _click(main.lobby._first_focus[LobbyScreen.Step.MODE],
 			func() -> bool: return main.lobby._step == LobbyScreen.Step.SEATS),
 			"A on Local game opens the seat step")
-	_expect(main.lobby.is_in_group(PadCursor.BLOCK_GROUP), "the seat step blocks the pad cursor")
+	_expect(not main.lobby.is_in_group(PadCursor.BLOCK_GROUP), "the seat step keeps the pad cursor")
 	await _wait(0.5)
 
 	await _tap(JOY_BUTTON_A)
@@ -76,9 +86,29 @@ func _run() -> void:
 	await _shot("3_lobby_seats")
 	await _tap(JOY_BUTTON_B)
 	_expect(main.lobby.seats().is_empty(), "B gives the seat back")
+
+	## Nintendo layout: A and B trade places, here as everywhere else.
+	_set_nintendo(true)
+	await _tap(JOY_BUTTON_B)
+	_expect(main.lobby.seats() == ([DEVICE] as Array[int]),
+			"Nintendo layout: the right-hand button (its A) claims the seat")
 	await _tap(JOY_BUTTON_A)
-	await _tap(JOY_BUTTON_START)
-	_expect(await _until(func() -> bool: return main.in_match()), "Start begins the match")
+	_expect(main.lobby.seats().is_empty(), "Nintendo layout: the bottom button (its B) gives it back")
+	_set_nintendo(false)
+
+	## Joining puts the hand on Start; the D-pad reaches Back; A on Start begins.
+	await _tap(JOY_BUTTON_A)
+	await _wait(0.2)
+	var start_button: Control = main.lobby._seat_start.get_focus_target()
+	_expect(PadCursor.get_snapped() == start_button, "joining puts the hand on Start")
+	await _tap(JOY_BUTTON_DPAD_LEFT)
+	_expect(PadCursor.get_snapped() != start_button and PadCursor.get_snapped() != null,
+			"D-pad left moves the hand to Back")
+	await _tap(JOY_BUTTON_DPAD_RIGHT)
+	_expect(PadCursor.get_snapped() == start_button, "D-pad right returns it to Start")
+	_expect(main.lobby.seats().size() == 1, "walking the hand does not change the seats")
+	await _tap(JOY_BUTTON_A)
+	_expect(await _until(func() -> bool: return main.in_match()), "A on Start begins the match")
 	await _wait(2.0)
 
 	var player := PlayerRegistry.body_of(PlayerRegistry.local_pids()[0]) as PlayerCharacter
@@ -135,6 +165,14 @@ func _run() -> void:
 	_expect(await _fires(&"p0_target_next", JOY_BUTTON_RIGHT_SHOULDER), "RB is next target")
 	_expect(await _fires(&"p0_target_prev", JOY_BUTTON_LEFT_SHOULDER), "LB is previous target")
 	_expect(await _fires(&"p0_interact", JOY_BUTTON_DPAD_UP), "D-pad up is interact")
+	## Nintendo layout leaves play on the same physical buttons and relabels them.
+	_set_nintendo(true)
+	_expect(await _fires(&"p0_jump", JOY_BUTTON_A), "Nintendo layout: jump stays on the bottom button")
+	_expect(await _fires(&"p0_item_1", JOY_BUTTON_X), "Nintendo layout: hotkey 1 stays on the left button")
+	_expect(PlayerBindings.hotkey_label(0, 0) == "Y" and PlayerBindings.hotkey_label(0, 2) == "A"
+			and PlayerBindings.jump_label() == "B", "Nintendo layout: the HUD prints that pad's letters")
+	_set_nintendo(false)
+	_expect(PlayerBindings.hotkey_label(0, 0) == "X", "and the Xbox letters come back")
 	_axis(JOY_AXIS_TRIGGER_RIGHT, 1.0)
 	await get_tree().process_frame
 	_expect(Input.is_action_pressed(&"p0_dash"), "RT is dash")
@@ -164,20 +202,84 @@ func _run() -> void:
 	await _wait(0.3)
 	_axis(JOY_AXIS_LEFT_X, 0.0)
 	await _wait(0.1)
-	_expect(panel.selected_item() == ItemDB.SHIELD, "the stick moves along the items")
+	_expect(panel.selected_item() == ItemDB.LANTERN, "the stick moves along the items")
 	_expect(player.global_position.distance_to(from_open) < 0.3,
 			"and does not walk the player about while the panel is open")
-	## Put the lantern, which arrived with every hotkey full, on X.
-	panel.select(ItemDB.LANTERN)
-	await _tap(JOY_BUTTON_X)
+	## The hookshot was found first, so it is what is equipped; swap to the lantern.
+	_expect(player.equipped() == ItemDB.HOOKSHOT, "the first usable found is the one equipped")
+	await _tap(JOY_BUTTON_A)
 	await _wait(0.1)
-	_expect(player.hotkeys[0] == ItemDB.LANTERN, "pressing a hotkey button assigns the chosen item to it")
+	_expect(player.equipped() == ItemDB.LANTERN, "A equips the highlighted usable")
+	panel.select(ItemDB.BOOTS)
+	await _tap(JOY_BUTTON_A)
+	await _wait(0.1)
+	_expect(player.equipped() == ItemDB.LANTERN and player.hotkeys[0] == ItemDB.SWORD,
+			"static equipment cannot be equipped, and the sword keeps its button")
 	_expect(not player.visual.is_acting(), "and uses nothing while the panel is open")
 	await _shot("5b_gear_assigned")
 	await _tap(JOY_BUTTON_BACK)
 	await _wait(0.3)
 	_expect(not player.inventory_open, "Select closes the panel")
 	await _shot("5c_hud_hotkeys")
+
+	## Holding LT and pushing the right stick brings up the gear wheel; letting the stick go
+	## equips the slice it was pointing at.
+	_expect(player.equipped() == ItemDB.LANTERN, "the lantern is equipped going into the wheel")
+	yaw = camera.yaw
+	_axis(JOY_AXIS_TRIGGER_LEFT, 1.0)
+	await _wait(0.2)
+	_expect(not player.wheel_open, "holding LT alone does not bring up the wheel")
+	_axis(JOY_AXIS_RIGHT_Y, -1.0)
+	await _wait(0.25)
+	_expect(player.wheel_open, "LT and a push of the right stick bring up the gear wheel")
+	var wheel: GearWheel = main.split_screen.huds[0]._wheel
+	_expect(wheel != null and wheel.visible, "the wheel is on screen in that player's pane")
+	_expect(player.wheel_choice == ItemDB.HOOKSHOT, "pushing the stick up points at the top slice")
+	_axis(JOY_AXIS_RIGHT_X, 1.0)
+	_axis(JOY_AXIS_RIGHT_Y, 0.0)
+	await _wait(0.2)
+	_expect(player.wheel_choice == ItemDB.LANTERN, "and right points at the slice on the right")
+	_expect(is_equal_approx(camera.yaw, yaw), "the camera holds still while LT has its stick")
+	from_open = player.global_position
+	_axis(JOY_AXIS_LEFT_X, 1.0)
+	await _wait(0.4)
+	_axis(JOY_AXIS_LEFT_X, 0.0)
+	_expect(player.global_position.distance_to(from_open) > 0.5,
+			"the left stick still walks the player while the wheel is up")
+	_axis(JOY_AXIS_RIGHT_X, 0.0)
+	_axis(JOY_AXIS_RIGHT_Y, -1.0)
+	await _wait(0.2)
+	await _shot("5d_gear_wheel")
+	## Springing back: the stick passes through half deflection on its way to centre.
+	_axis(JOY_AXIS_RIGHT_Y, -0.35)
+	await _wait(0.05)
+	_axis(JOY_AXIS_RIGHT_Y, 0.0)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_expect(player.wheel_open, "the wheel waits a moment after the stick comes to rest")
+	await _wait(0.2)
+	_expect(not player.wheel_open, "and closes 100 ms later")
+	_expect(player.equipped() == ItemDB.HOOKSHOT, "equipping the slice the stick was let go at")
+	## A slice for something not found yet changes nothing.
+	_axis(JOY_AXIS_RIGHT_X, 1.0)
+	_axis(JOY_AXIS_RIGHT_Y, 0.4)
+	await _wait(0.2)
+	_expect(player.wheel_choice == ItemDB.FAN or not player.has_item(player.wheel_choice),
+			"the stick can point at a slice for something not found yet")
+	_axis(JOY_AXIS_RIGHT_X, 0.0)
+	_axis(JOY_AXIS_RIGHT_Y, 0.0)
+	await _wait(0.3)
+	_expect(not player.wheel_open and player.equipped() == ItemDB.HOOKSHOT,
+			"letting go there closes the wheel with nothing changed")
+	_axis(JOY_AXIS_TRIGGER_LEFT, 0.0)
+	await _wait(0.2)
+	yaw = camera.yaw
+	_axis(JOY_AXIS_RIGHT_X, 1.0)
+	await _wait(0.3)
+	_axis(JOY_AXIS_RIGHT_X, 0.0)
+	_expect(not player.wheel_open and not is_equal_approx(camera.yaw, yaw),
+			"without LT the right stick is the camera again")
+	await _wait(0.2)
 
 	## Start pauses, and the players stop reading input while the menu is up.
 	await _tap(JOY_BUTTON_START)
@@ -227,6 +329,12 @@ func _run() -> void:
 			"Main Menu returns to the main menu")
 	_expect(PlayerRegistry.roster.is_empty(), "leaving clears the roster")
 	_finish()
+
+
+func _set_nintendo(on: bool) -> void:
+	SaveManager.global_config.nintendo_layout = on
+	SaveManager.apply_pad_layout()
+	SaveManager.keybinds_changed.emit()
 
 
 func _finish() -> void:

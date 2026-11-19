@@ -13,6 +13,9 @@ signal world_built
 ## Radius of the ring the party spawns in. Kept under one tile so that a spawn point cleared by
 ## Chunk.ground_spawn stays clear for everyone standing around it.
 const PLAYER_SPAWN_SPREAD := 1.8
+## The colour grade laid over the scene (1.0 = untouched).
+const SATURATION := 1.3
+const CONTRAST := 1.06
 
 var chunks: Array[Chunk] = []
 var layout: Array[StringName] = []
@@ -305,6 +308,12 @@ func _build_environment() -> void:
 	## Thinned to match the larger map: at the old density the far side of a 512 m world
 	## disappeared into haze entirely, including the mountain the party is walking towards.
 	environment.fog_density = 0.0009
+	## A colour grade over the whole scene: the art kits' flat palettes read a little washed out
+	## under the sky light and haze, so saturation is pushed up and contrast a touch with it.
+	## Applied after tonemapping, so it costs one pass and changes no lighting.
+	environment.adjustment_enabled = true
+	environment.adjustment_saturation = SATURATION
+	environment.adjustment_contrast = CONTRAST
 
 	var world_environment := WorldEnvironment.new()
 	world_environment.name = "WorldEnvironment"

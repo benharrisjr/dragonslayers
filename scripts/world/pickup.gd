@@ -89,10 +89,13 @@ func _net_collected(player_path: NodePath) -> void:
 			Kind.GOLD:
 				## Gold is a party pool, so it does not matter who physically ran over the coin.
 				player.add_gold(amount)
+				GameSfx.play_at(&"coin", global_position)
 			Kind.HEART:
 				player.heal(amount)
+				GameSfx.play_at(&"heart", global_position)
 			Kind.ITEM:
 				player.add_item(item_id())
+				GameSfx.play_at(&"item", global_position)
 	queue_free()
 
 
@@ -104,7 +107,7 @@ func item_id() -> StringName:
 ## Gear is one each: a player who already holds this item walks past it and leaves it for
 ## someone who does not.
 func _may_take(player: PlayerCharacter) -> bool:
-	if player == null or player.has_item(item_id()):
+	if player == null or not player.can_take(item_id()):
 		return false
 	return not (dropped_by != 0 and player.pid == dropped_by and _time < DROPPER_GRACE)
 

@@ -9,6 +9,10 @@ extends Node3D
 ## only thing crossing the wire is the seed.
 
 const PROP_CLEARANCE_TILES := 2
+## How much of a prop's visual radius is solid.
+const COLLIDER_FRACTION := 0.45
+## How far a prop's collider continues underground.
+const COLLIDER_ROOT := 6.0
 ## Placement attempts per tile per unit of a biome's prop_density. Cut to roughly a third of
 ## what it was: the world read as littered, and open ground is what makes the ramps, mesas and
 ## shoreline legible from a distance.
@@ -29,8 +33,13 @@ var _occupied: Dictionary = {}
 ## Host's running count of pickups spawned in this chunk; see _spawn_pickup.
 var _pickup_serial: int = 0
 ## Every prop placed, in placement order -- the same order on every peer, so a prop's index
-## names it across the network. Each: {"node", "body", "burnable", "burnt"}.
+## names it across the network. Each: {"node", "body", "burnable", "burnt", "liftable", "taken",
+## "radius"}.
 var _props: Array[Dictionary] = []
+## The bugs flying about this chunk, if it has any.
+var bugs: BugSwarm
+## The town's shop; null everywhere else.
+var shop: Shop
 
 ## Scenery a lantern's fire burns away, matched on the start of the model's file name.
 const FLAMMABLE: Array[String] = [
@@ -59,6 +68,10 @@ func build(chunk_index: int, biome_id: StringName, rng: RandomNumberGenerator,
 	_scatter_props()
 	_spawn_monsters()
 	_spawn_chests()
+	## Last, so that adding them moved nothing that was already being placed from the seed.
+	if biome.id == &"town":
+		_spawn_shop()
+	_spawn_bugs()
 
 
 func _build_terrain() -> void:
@@ -162,12 +175,17 @@ func _scatter_props() -> void:
 		node.position = _tile_centre(x, z)
 		node.rotation.y = _rng.randf() * TAU
 		container.add_child(node)
-		_mark_occupied(x, z)
-
 		var radius: float = prop["radius"]
+		## Big trunks need more room between them than the default, or a forest turns into a
+		## wall: leave a few metres of gap beyond the colliders.
+		_mark_occupied(x, z, maxi(PROP_CLEARANCE_TILES,
+				ceili(radius * COLLIDER_FRACTION * 2.0 / ChunkMesher.TILE_SIZE) + 1))
+
 		Culling.apply_prop_range(node, radius)
 		var record := {"node": node, "body": null, "burnt": false,
-				"burnable": _is_flammable(prop["path"])}
+				"burnable": _is_flammable(prop["path"]),
+				"liftable": String(prop["path"]).get_file().begins_with("rock"),
+				"taken": false, "radius": radius}
 		_props.append(record)
 		if radius > 0.0:
 			## Trees and rocks are obstacles you can be knocked into, not scenery you walk
@@ -176,10 +194,13 @@ func _scatter_props() -> void:
 			body.collision_layer = Combatant.LAYER_SCENERY
 			var shape := CollisionShape3D.new()
 			var cylinder := CylinderShape3D.new()
-			cylinder.radius = radius * 0.45
-			cylinder.height = 4.0
+			cylinder.radius = radius * COLLIDER_FRACTION
+			## Rooted well below the surface: a body that ends up overlapping the trunk is then
+			## pushed out sideways, never down through the ground under it.
+			var above := 4.0 * float(prop.get("size", 1.0))
+			cylinder.height = above + COLLIDER_ROOT
 			shape.shape = cylinder
-			shape.position.y = 2.0
+			shape.position.y = (above - COLLIDER_ROOT) * 0.5
 			body.add_child(shape)
 			body.position = node.position
 			container.add_child(body)
@@ -267,7 +288,7 @@ func _on_chest_opened(chest: TreasureChest) -> void:
 	_spawn_loot(chest.global_position + Vector3.UP, chest.gold_value, chest.is_large)
 	if chest.item_id != &"":
 		## Set down in front of the chest rather than on it, clear of the coins.
-		drop_item(chest.item_id, chest.global_position + Vector3(0.0, 0.8, 1.6))
+		drop_item(chest.item_id, chest.global_position + Vector3(0.0, 0.8, 2.8))
 
 
 ## Loot is spawned by the host and replicated, unlike everything else in the chunk: where a coin
@@ -335,6 +356,16 @@ func burn_near(at: Vector3, reach: float) -> void:
 				_net_burn_prop(index)
 
 
+## Where every tree and rock stands, for the map screen: {"position": Vector3, "tree": bool}.
+func prop_marks() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for record in _props:
+		var node := record["node"] as Node3D
+		if node != null and is_instance_valid(node) and not record["taken"]:
+			out.append({"position": global_position + node.position, "tree": record["burnable"]})
+	return out
+
+
 ## World positions of the flammable props still standing.
 func flammable_props() -> Array[Vector3]:
 	var found: Array[Vector3] = []
@@ -360,6 +391,118 @@ func _net_burn_prop(index: int) -> void:
 	tween.tween_property(node, "scale", node.scale * Vector3(1.0, 0.02, 1.0), 0.9) \
 			.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
 	tween.tween_callback(node.queue_free)
+
+
+# --- rocks a power glove can lift ----------------------------------------------------------
+
+## The rock a player standing at `at` and looking along `facing` would pick up: the nearest one
+## whose side is within `reach` and that is not behind them. {"chunk", "index"}, or {} for none.
+static func nearest_liftable(tree: SceneTree, at: Vector3, facing: Vector3,
+		reach: float) -> Dictionary:
+	var best := {}
+	var best_gap := reach
+	for node in tree.get_nodes_in_group("chunks"):
+		var chunk := node as Chunk
+		## Only chunks near enough to hold a rock in reach are worth walking.
+		var middle := chunk.global_position \
+				+ Vector3(WorldGenerator.CHUNK_SIZE, 0.0, WorldGenerator.CHUNK_SIZE) * 0.5
+		if absf(at.x - middle.x) > WorldGenerator.CHUNK_SIZE * 0.5 + 8.0 \
+				or absf(at.z - middle.z) > WorldGenerator.CHUNK_SIZE * 0.5 + 8.0:
+			continue
+		for index in chunk._props.size():
+			if not chunk.can_lift(index):
+				continue
+			var record := chunk._props[index]
+			var offset := (record["node"] as Node3D).global_position - at
+			if absf(offset.y) > 2.5:
+				continue
+			offset.y = 0.0
+			var gap := offset.length() - float(record["radius"]) * COLLIDER_FRACTION
+			if gap < best_gap and (offset.length() < 0.5 or facing.dot(offset.normalized()) > 0.2):
+				best_gap = gap
+				best = {"chunk": chunk, "index": index}
+	return best
+
+
+func can_lift(index: int) -> bool:
+	if index < 0 or index >= _props.size():
+		return false
+	var record := _props[index]
+	return record["liftable"] and not record["taken"] and not record["burnt"]
+
+
+## Takes a rock out of the ground on this peer and hands its model over, collider gone. The
+## caller decides what becomes of it. Null if it was already taken.
+func lift_prop(index: int) -> Node3D:
+	if not can_lift(index):
+		return null
+	var record := _props[index]
+	record["taken"] = true
+	var body := record["body"] as Node
+	if body != null:
+		body.queue_free()
+		record["body"] = null
+	var node := record["node"] as Node3D
+	node.get_parent().remove_child(node)
+	return node
+
+
+## World positions of the rocks still standing, for the playtest and anything else that wants one.
+func liftable_props() -> Array[Vector3]:
+	var found: Array[Vector3] = []
+	for index in _props.size():
+		if can_lift(index):
+			found.append((_props[index]["node"] as Node3D).global_position)
+	return found
+
+
+# --- shop and bugs ----------------------------------------------------------------------------
+
+## The shop stands as near the middle of town as there is room for it.
+func _spawn_shop() -> void:
+	var tiles := WorldGenerator.CHUNK_TILES
+	var half := tiles / 2
+	for ring in range(2, half - 4):
+		for dz in range(-ring, ring + 1):
+			for dx in range(-ring, ring + 1):
+				if maxi(absi(dx), absi(dz)) != ring:
+					continue
+				var x := half + dx
+				var z := half + dz
+				if not _is_free(x, z) or terrain.reach[z * tiles + x] == 0:
+					continue
+				shop = Shop.new()
+				shop.name = "Shop_%d" % index
+				add_child(shop)
+				shop.position = _tile_centre(x, z)
+				shop.setup()
+				_mark_occupied(x, z, 3)
+				return
+
+
+func _spawn_bugs() -> void:
+	var count: int = BugSwarm.COUNTS.get(biome.id, 0)
+	if count <= 0:
+		return
+	## Their own generator: bugs are decoration as far as the seed is concerned, and must not
+	## shift where anything else in the chunk is placed.
+	var rng := GameState.chunk_rng(index + 5000)
+	var tiles := WorldGenerator.CHUNK_TILES
+	var homes: Array[Vector3] = []
+	for _attempt in count * 6:
+		if homes.size() >= count:
+			break
+		var x := rng.randi_range(4, tiles - 5)
+		var z := rng.randi_range(4, tiles - 5)
+		var at := z * tiles + x
+		if heights[at] == ChunkMesher.HOLE or heights[at] < terrain.base_level \
+				or terrain.reach[at] == 0 or is_arena_tile(x, z):
+			continue
+		homes.append(_tile_centre(x, z))
+	bugs = BugSwarm.new()
+	bugs.name = "Bugs"
+	add_child(bugs)
+	bugs.build(homes, rng)
 
 
 ## The chunk a world position falls in, or null outside the map.
@@ -414,9 +557,9 @@ func _is_free(x: int, z: int) -> bool:
 	return true
 
 
-func _mark_occupied(x: int, z: int) -> void:
-	for dz in range(-PROP_CLEARANCE_TILES, PROP_CLEARANCE_TILES + 1):
-		for dx in range(-PROP_CLEARANCE_TILES, PROP_CLEARANCE_TILES + 1):
+func _mark_occupied(x: int, z: int, clearance: int = PROP_CLEARANCE_TILES) -> void:
+	for dz in range(-clearance, clearance + 1):
+		for dx in range(-clearance, clearance + 1):
 			_occupied[Vector2i(x + dx, z + dz)] = true
 
 

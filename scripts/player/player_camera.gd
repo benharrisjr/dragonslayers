@@ -87,7 +87,8 @@ func _process(delta: float) -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	_frame_delta = delta
-	if _input != null:
+	## Holding the wheel button hands the camera's stick (and Q / E) to the gear wheel.
+	if _input != null and not player.wheel_open and not _input.wheel_held():
 		yaw -= _input.camera_turn() * TURN_SPEED * delta
 		pitch_offset = clampf(pitch_offset + _input.camera_pitch() * STICK_PITCH_SPEED * delta,
 				-PITCH_RANGE, PITCH_RANGE)

@@ -1,0 +1,19 @@
+[remap]
+
+importer="oggvorbisstr"
+type="AudioStreamOggVorbis"
+uid="uid://b0bvxxq1ls5vt"
+path="res://.godot/imported/10 - Lost Shrine.ogg-fdce7f9d8d556827d771d70aee0dd0a6.oggvorbisstr"
+
+[deps]
+
+source_file="res://music/10 - Lost Shrine.ogg"
+dest_files=["res://.godot/imported/10 - Lost Shrine.ogg-fdce7f9d8d556827d771d70aee0dd0a6.oggvorbisstr"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

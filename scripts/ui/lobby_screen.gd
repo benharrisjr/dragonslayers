@@ -9,9 +9,13 @@ extends Control
 ## slots in the order people press, and the resulting device list is what PlayerBindings turns
 ## into each player's controls.
 ##
-## The mode and address steps are ordinary menus driven by the template's pad cursor. The join
-## step blocks that cursor (PadCursor.BLOCK_GROUP) and reads raw events instead, because it has
-## to know *which* pad pressed A -- the cursor flattens every pad into one.
+## Every step is an ordinary menu driven by the template's pad cursor and its pointing hand. The
+## join step additionally reads raw events ahead of that cursor, because it has to know *which*
+## pad pressed Confirm -- the cursor flattens every pad into one. A pad that has not joined yet
+## joins; one that has is passed through, so its Confirm clicks whatever the hand is on.
+##
+## Confirm and Cancel are whatever the template says they are (PadCursor.confirm_button), so the
+## Options "Nintendo Layout" switch and any rebinding apply here too.
 
 ## `devices` is one entry per joined player, each a list of device ids for PlayerBindings.
 signal start_requested(mode: String, address: String, devices: Array)
@@ -36,6 +40,9 @@ var _mode: String = "offline"
 ## Device ids in the order they joined; index is the player slot.
 var _seats: Array[int] = []
 var _seats_opened_msec: int = 0
+## Pad presses this screen took, as "device:button", so their releases are taken too rather
+## than reaching the pad cursor as a release with no press.
+var _taken_presses: Dictionary = {}
 
 var _pages: Dictionary = {}
 var _first_focus: Dictionary = {}
@@ -53,7 +60,6 @@ func _ready() -> void:
 	add_to_group(PadNav.SCOPE_GROUP)
 	_build()
 	NetworkManager.connection_changed.connect(_on_connection_changed)
-	visibility_changed.connect(_sync_pad_block)
 	show_step(Step.MODE)
 
 
@@ -144,9 +150,8 @@ func _build_seats_page() -> Control:
 		_seat_cards.append({"card": card, "seat": seat, "hero": hero, "device": device,
 				"color": archetype.color})
 
-	## Mouse-only buttons: with the pad cursor blocked, the pads start with Start and back out
-	## with B, and the keyboard uses Enter and Escape. Focus would only let Space (which means
-	## "join" here) press them by accident.
+	## No keyboard focus on these: Space means "join" here and would press a focused button by
+	## accident. The pad's hand and the mouse click them; the keyboard uses Enter and Escape.
 	var buttons := HBoxContainer.new()
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	buttons.add_theme_constant_override("separation", 16)
@@ -209,7 +214,7 @@ func show_step(step: Step) -> void:
 	_step = step
 	for key: Step in _pages:
 		(_pages[key] as Control).visible = key == step
-	_sync_pad_block()
+	_taken_presses.clear()
 	if step == Step.SEATS:
 		_seats.clear()
 		_seats_opened_msec = Time.get_ticks_msec()
@@ -259,54 +264,70 @@ func _on_keypad(key: String) -> void:
 		_address_field.text += key
 
 
-## The pad cursor is switched off for exactly as long as the seat step is on screen.
-func _sync_pad_block() -> void:
-	var block := is_visible_in_tree() and _step == Step.SEATS
-	if block and not is_in_group(PadCursor.BLOCK_GROUP):
-		add_to_group(PadCursor.BLOCK_GROUP)
-	elif not block and is_in_group(PadCursor.BLOCK_GROUP):
-		remove_from_group(PadCursor.BLOCK_GROUP)
-
-
 # --- claiming seats -----------------------------------------------------------------------
 
-## _input rather than _unhandled_input: PadCursor swallows every joypad event while it is
-## blocked, and scene nodes are offered events before autoloads are.
+## _input rather than _unhandled_input: scene nodes are offered events before the pad cursor
+## autoload, which would otherwise turn every pad's Confirm into the same anonymous click.
 func _input(event: InputEvent) -> void:
 	if _step != Step.SEATS or not is_visible_in_tree():
 		return
-	if Time.get_ticks_msec() - _seats_opened_msec < SEAT_INPUT_DELAY_MSEC:
-		return
-
-	var device := -2
-	var join := false
-	var leave := false
-	var start := false
 	var button := event as InputEventJoypadButton
 	var key := event as InputEventKey
-	if button != null and button.pressed:
-		device = button.device
-		join = button.button_index == JOY_BUTTON_A
-		leave = button.button_index == JOY_BUTTON_B
-		start = button.button_index == JOY_BUTTON_START
-	elif key != null and key.pressed and not key.echo:
-		device = PlayerBindings.KEYBOARD
-		join = key.physical_keycode == KEY_SPACE
-		leave = key.physical_keycode == KEY_ESCAPE
-		start = key.physical_keycode == KEY_ENTER or key.physical_keycode == KEY_KP_ENTER
-	if not (join or leave or start):
-		return
-	get_viewport().set_input_as_handled()
+	if button != null:
+		_on_seat_button(button)
+	elif key != null and key.pressed and not key.echo and _seats_open():
+		_on_seat_key(key)
 
-	if join:
+
+func _seats_open() -> bool:
+	return Time.get_ticks_msec() - _seats_opened_msec >= SEAT_INPUT_DELAY_MSEC
+
+
+func _on_seat_button(button: InputEventJoypadButton) -> void:
+	var press_id := "%d:%d" % [button.device, button.button_index]
+	if not button.pressed:
+		if _taken_presses.erase(press_id):
+			get_viewport().set_input_as_handled()
+		return
+	if not _seats_open():
+		return
+	var device := button.device
+	var joined := _seats.has(device)
+	var taken := true
+	if button.button_index == PadCursor.confirm_button() and not joined:
 		claim_seat(device)
-	elif leave:
-		if _seats.has(device):
+	elif button.button_index == PadCursor.cancel_button():
+		if joined:
 			release_seat(device)
 		elif _seats.is_empty():
 			_leave_seats()
-	elif start and _seats.has(device):
+	elif button.button_index == JOY_BUTTON_START and joined:
 		_confirm_seats()
+	else:
+		## Everything else -- the D-pad, and Confirm from someone already seated -- is the
+		## pad cursor's: it moves the hand and clicks what it points at.
+		taken = false
+	if taken:
+		_taken_presses[press_id] = true
+		get_viewport().set_input_as_handled()
+
+
+func _on_seat_key(key: InputEventKey) -> void:
+	var device := PlayerBindings.KEYBOARD
+	match key.physical_keycode:
+		KEY_SPACE:
+			claim_seat(device)
+		KEY_ESCAPE:
+			if _seats.has(device):
+				release_seat(device)
+			elif _seats.is_empty():
+				_leave_seats()
+		KEY_ENTER, KEY_KP_ENTER:
+			if _seats.has(device):
+				_confirm_seats()
+		_:
+			return
+	get_viewport().set_input_as_handled()
 
 
 func claim_seat(device: int) -> void:
@@ -314,6 +335,9 @@ func claim_seat(device: int) -> void:
 		return
 	_seats.append(device)
 	_refresh_seats()
+	## Put the hand on Start, so the same button pressed again begins the hunt.
+	if device != PlayerBindings.KEYBOARD:
+		PadCursor.point_at.call_deferred(_seat_start.get_focus_target())
 
 
 func release_seat(device: int) -> void:
@@ -336,7 +360,7 @@ func _refresh_seats() -> void:
 		(card["card"] as PanelContainer).add_theme_stylebox_override("panel",
 				UiTheme.slot_style(card["color"] if taken else UiTheme.TEXT_DISABLED))
 	_seat_start.disabled = _seats.is_empty()
-	_seat_hint.text = "A / Space to join   ·   B / Esc to leave   ·   Start / Enter to begin" \
+	_seat_hint.text = "A / Space to join   ·   B / Esc to leave   ·   A on Start, or Enter, to begin" \
 			if not _seats.is_empty() else "Press A on a gamepad or Space on the keyboard to join"
 
 

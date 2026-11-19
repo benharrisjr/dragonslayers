@@ -15,12 +15,14 @@ const KEYBOARD := -1
 const DEADZONE := 0.25
 const ACTIONS: Array[String] = [
 	"left", "right", "up", "down", "jump", "dash",
-	"item_1", "item_2", "item_3", "inventory",
+	"item_1", "item_2", "item_3", "inventory", "wheel",
 	"target_next", "target_prev", "interact",
 	"cam_left", "cam_right", "cam_up", "cam_down",
+	"wheel_left", "wheel_right", "wheel_up", "wheel_down",
 ]
 
-## Physical keys per action. The first hotkey is also the left mouse button, added separately.
+## Physical keys per action. The sword is also the left mouse button and the equipped usable the
+## right one, added separately.
 const KEYS: Dictionary = {
 	"left": [KEY_A, KEY_LEFT],
 	"right": [KEY_D, KEY_RIGHT],
@@ -32,6 +34,7 @@ const KEYS: Dictionary = {
 	"item_2": [KEY_K],
 	"item_3": [KEY_L],
 	"inventory": [KEY_I],
+	"wheel": [KEY_R],
 	"target_next": [KEY_TAB],
 	"target_prev": [KEY_BACKSPACE],
 	"interact": [KEY_F],
@@ -39,7 +42,10 @@ const KEYS: Dictionary = {
 	"cam_right": [KEY_E],
 }
 
-## Pad buttons per action.
+## Pad buttons per action, by position (Godot's ids are positional: JOY_BUTTON_A is the bottom
+## face button on every pad). Play keeps the same fingers on every controller -- jump is always
+## the bottom button -- and the Options "Nintendo Layout" switch only changes which letter the
+## HUD prints for each (see hotkey_label). Menus are different: there the switch moves Confirm.
 const PAD_BUTTONS: Dictionary = {
 	"jump": JOY_BUTTON_A,
 	"item_1": JOY_BUTTON_X,
@@ -62,6 +68,13 @@ const PAD_AXES: Dictionary = {
 	"cam_up": [JOY_AXIS_RIGHT_Y, -1.0],
 	"cam_down": [JOY_AXIS_RIGHT_Y, 1.0],
 	"dash": [JOY_AXIS_TRIGGER_RIGHT, 1.0],
+	"wheel": [JOY_AXIS_TRIGGER_LEFT, 1.0],
+	## The camera's stick again, under names no key is bound to, so the gear wheel can tell a
+	## stick pointing from Q and E turning the camera.
+	"wheel_left": [JOY_AXIS_RIGHT_X, -1.0],
+	"wheel_right": [JOY_AXIS_RIGHT_X, 1.0],
+	"wheel_up": [JOY_AXIS_RIGHT_Y, -1.0],
+	"wheel_down": [JOY_AXIS_RIGHT_Y, 1.0],
 }
 
 ## One entry per slot, each a list of device ids (KEYBOARD or a joypad id).
@@ -130,6 +143,15 @@ static func slot_of_pad(device: int) -> int:
 ## What to call a hotkey on screen for whoever is in `slot`: the pad's button letter if they
 ## are on a pad, the key otherwise.
 static func hotkey_label(slot: int, hotkey: int) -> String:
+	if not on_pad(slot):
+		return ["LMB", "K", "RMB"][hotkey]
+	## The hotkeys are the left, top and right face buttons; a Nintendo pad prints different
+	## letters on those than an Xbox one.
+	return ["Y", "X", "A"][hotkey] if _nintendo() else ["X", "Y", "B"][hotkey]
+
+
+## Whether `slot`'s prompts should name pad buttons rather than keys.
+static func on_pad(slot: int) -> bool:
 	var devices := devices_of(slot)
 	var on_pad := false
 	for device: int in devices:
@@ -139,11 +161,25 @@ static func hotkey_label(slot: int, hotkey: int) -> String:
 	## actually plugged in.
 	if on_pad and devices.has(KEYBOARD) and Input.get_connected_joypads().is_empty():
 		on_pad = false
-	return ["X", "Y", "B"][hotkey] if on_pad else ["J", "K", "L"][hotkey]
+	return on_pad
 
 
 static func inventory_label(slot: int) -> String:
-	return "Select" if hotkey_label(slot, 0) == "X" else "I"
+	return "Select" if on_pad(slot) else "I"
+
+
+## What is held to bring up the gear wheel: the left trigger, or R.
+static func wheel_label(slot: int) -> String:
+	return "LT" if on_pad(slot) else "R"
+
+
+## The letter printed on the jump button (the bottom face button).
+static func jump_label() -> String:
+	return "B" if _nintendo() else "A"
+
+
+static func _nintendo() -> bool:
+	return SaveManager.global_config != null and SaveManager.global_config.nintendo_layout
 
 
 static func device_label(device: int) -> String:
@@ -159,6 +195,10 @@ static func _add_keyboard(action: StringName, action_name: String) -> void:
 		var click := InputEventMouseButton.new()
 		click.button_index = MOUSE_BUTTON_LEFT
 		InputMap.action_add_event(action, click)
+	if action_name == "item_3":
+		var right_click := InputEventMouseButton.new()
+		right_click.button_index = MOUSE_BUTTON_RIGHT
+		InputMap.action_add_event(action, right_click)
 
 
 static func _add_pad(action: StringName, action_name: String, device: int) -> void:

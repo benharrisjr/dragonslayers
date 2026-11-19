@@ -16,6 +16,10 @@ var world: GameWorld
 var split_screen: SplitScreen
 var lobby: LobbyScreen
 var outcome: OutcomeScreen
+## The overhead map, toggled with M during a match.
+var map_screen: MapScreen
+## Proximity voice chat. Always present, at the same path on every machine, and idle offline.
+var voice: VoiceChat
 var options: OptionsScreen
 
 ## The frame the pause menu last opened or closed on. One Start press can arrive twice -- once
@@ -28,6 +32,11 @@ func _ready() -> void:
 	add_to_group(GameWorld.EFFECTS_GROUP)
 	PlayerInput.enabled = true
 	PlayerBindings.reapply()
+	## Rendered now rather than on first use, so the first sword swing does not hitch.
+	GameSfx.register()
+	voice = VoiceChat.new()
+	voice.name = "VoiceChat"
+	add_child(voice)
 
 	lobby = LobbyScreen.new()
 	lobby.name = "Lobby"
@@ -87,7 +96,12 @@ func _handle_command_line() -> void:
 		capture.delay = float(args.get("capture-delay", "5"))
 		capture.follow_up = int(args.get("capture-count", "0"))
 		capture.overview = args.has("capture-overview")
-		capture.gear = args.has("capture-gear")
+		capture.gear = args.has("capture-gear") or args.has("capture-wheel")
+		capture.wheel = args.has("capture-wheel")
+		capture.map = args.has("capture-map")
+		capture.shop = args.has("capture-shop")
+		capture.look_only = args.get("capture-shop", "") == "look"
+		capture.rock = args.has("capture-rock")
 		add_child(capture)
 
 	if args.has("jitter"):
@@ -215,9 +229,14 @@ func _teardown_match() -> void:
 	if split_screen != null:
 		split_screen.queue_free()
 		split_screen = null
+	## The map is a picture of the world that just went.
+	if map_screen != null:
+		map_screen.queue_free()
+		map_screen = null
 	## Effects in flight belong to the match that fired them.
 	for node in get_children():
-		if node is Projectile or node is FirePatch:
+		if node is Projectile or node is FirePatch or node is ThrownRock or node is Gust \
+				or node is RockShards:
 			node.queue_free()
 
 
@@ -286,9 +305,38 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if GameState.phase != GameState.Phase.PLAYING:
 		return
+	var key := event as InputEventKey
+	if key != null and key.pressed and not key.echo and key.physical_keycode == KEY_M \
+			and not _menu_open():
+		get_viewport().set_input_as_handled()
+		toggle_map()
+		return
+	if key != null and key.pressed and not key.echo and key.physical_keycode == KEY_V \
+			and not _menu_open() and voice.active():
+		get_viewport().set_input_as_handled()
+		voice.toggle_mute()
+		return
 	if event.is_action_pressed("open_menu"):
 		get_viewport().set_input_as_handled()
+		## Escape puts the map away before it opens the menu.
+		if map_screen != null and map_screen.visible:
+			map_screen.toggle()
+			return
 		_toggle_options()
+
+
+func toggle_map() -> void:
+	if world == null:
+		return
+	if map_screen == null:
+		map_screen = MapScreen.new()
+		map_screen.name = "MapScreen"
+		add_child(map_screen)
+		## Over the panes, under the pause menu and the outcome screen.
+		if split_screen != null:
+			move_child(map_screen, split_screen.get_index() + 1)
+		map_screen.setup(world)
+	map_screen.toggle()
 
 
 func _toggle_options() -> void:

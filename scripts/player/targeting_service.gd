@@ -69,14 +69,14 @@ func pick_at(camera: Camera3D, screen_position: Vector2) -> bool:
 	query.collide_with_areas = false
 	query.exclude = [owner_player.get_rid()] if owner_player != null else []
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	## A click that lands on nothing hostile leaves the target alone: the left button is also
+	## the sword, and swinging at a targeted monster must not let go of it.
 	if hit.is_empty():
-		set_target(null)
 		return false
 	var combatant := hit["collider"] as Combatant
 	if combatant != null and owner_player != null and owner_player.is_hostile_to(combatant):
 		set_target(combatant)
 		return true
-	set_target(null)
 	return false
 
 

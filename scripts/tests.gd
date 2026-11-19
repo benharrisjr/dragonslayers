@@ -962,20 +962,17 @@ func _test_gear() -> void:
 	_check("no feather to begin with, so no jump", not hero.has_item(ItemDB.FEATHER))
 
 	_check("a found item is taken", hero.add_item(ItemDB.HOOKSHOT))
-	_check("and goes straight onto the free hotkey", hero.hotkeys[2] == ItemDB.HOOKSHOT)
+	_check("and is equipped on the third button straight away",
+			hero.equipped() == ItemDB.HOOKSHOT)
 	_check("a second one is left on the ground", not hero.add_item(ItemDB.HOOKSHOT))
 	hero.add_item(ItemDB.FEATHER)
 	hero.add_item(ItemDB.BOOTS)
 	_check("passive gear takes no hotkey",
 			not hero.hotkeys.has(ItemDB.FEATHER) and not hero.hotkeys.has(ItemDB.BOOTS))
-	_check("passive gear cannot be put on one", not hero.assign_hotkey(0, ItemDB.FEATHER))
-
-	## Assigning swaps rather than duplicating or dropping.
-	hero.assign_hotkey(0, ItemDB.HOOKSHOT)
-	_check("assigning an item swaps it with what was on the button",
-			hero.hotkeys[0] == ItemDB.HOOKSHOT and hero.hotkeys[2] == ItemDB.SWORD
-			and hero.hotkeys[1] == ItemDB.SHIELD, str(hero.hotkeys))
-	_check("an item nobody holds cannot be assigned", not hero.assign_hotkey(1, &"nonsense"))
+	_check("static gear cannot be equipped", not hero.equip(ItemDB.FEATHER))
+	_check("nor can the sword: it has its own button", not hero.equip(ItemDB.SWORD)
+			and hero.hotkeys[0] == ItemDB.SWORD and hero.hotkeys[1] == ItemDB.SHIELD)
+	_check("an item nobody holds cannot be equipped", not hero.equip(&"nonsense"))
 
 	## The shield. Every character faces +Z at rest.
 	var front := hero.global_position + Vector3(0, 0, 3)
@@ -1035,13 +1032,19 @@ func _test_gear() -> void:
 			and ItemDB.is_droppable(ItemDB.HOOKSHOT) and ItemDB.is_droppable(ItemDB.FEATHER)
 			and ItemDB.is_droppable(ItemDB.BOOTS))
 
-	## The lantern. Four things want a button and there are three buttons.
+	## The lantern. Two usables share one button.
 	hero.add_item(ItemDB.HOOKSHOT)
-	_check("with every hotkey taken a new item waits in the panel",
-			hero.add_item(ItemDB.LANTERN) and hero.hotkey_of(ItemDB.LANTERN) < 0)
-	_check("and can be put on a button in place of something else",
-			hero.assign_hotkey(1, ItemDB.LANTERN) and hero.hotkeys[1] == ItemDB.LANTERN
-			and hero.hotkey_of(ItemDB.SHIELD) < 0, str(hero.hotkeys))
+	_check("a second usable waits in the panel",
+			hero.add_item(ItemDB.LANTERN) and hero.equipped() == ItemDB.HOOKSHOT)
+	_check("and can be equipped in place of the first",
+			hero.equip(ItemDB.LANTERN) and hero.equipped() == ItemDB.LANTERN
+			and hero.hotkeys[0] == ItemDB.SWORD and hero.hotkeys[1] == ItemDB.SHIELD,
+			str(hero.hotkeys))
+	hero.remove_item(ItemDB.LANTERN)
+	_check("losing the equipped one puts the other on the button",
+			hero.equipped() == ItemDB.HOOKSHOT)
+	hero.add_item(ItemDB.LANTERN)
+	hero.equip(ItemDB.LANTERN)
 	_check("the lantern is dropped on death like the other finds", ItemDB.is_droppable(ItemDB.LANTERN))
 
 	## Its fire burns monsters and leaves the party alone; the dragon's does the reverse.
@@ -1084,8 +1087,247 @@ func _test_gear() -> void:
 	dragon_fire.queue_free()
 	skeleton.queue_free()
 
+	_test_new_gear(hero)
+
 	hero.queue_free()
 	PlayerRegistry.clear()
+
+
+## Power glove, bug net, fan, heart container, the shop, the hookshot's stun and the sounds.
+func _test_new_gear(hero: PlayerCharacter) -> void:
+	print("\n--- glove, net, fan, hearts, shop")
+	hero._alight_left = 0.0
+	hero.knockback_time = 0.0
+	hero.visual.stop_action()
+	hero.global_position = Vector3(200, 0, 200)
+	hero.rotation.y = 0.0
+
+	_check("glove, net and fan are usable equipment and are dropped on death",
+			ItemDB.is_usable(ItemDB.GLOVE) and ItemDB.is_usable(ItemDB.NET)
+			and ItemDB.is_usable(ItemDB.FAN) and ItemDB.is_droppable(ItemDB.GLOVE)
+			and ItemDB.is_droppable(ItemDB.NET) and ItemDB.is_droppable(ItemDB.FAN))
+	var found := {}
+	for index in 16:
+		found[ItemDB.chest_item(index, &"plains")] = true
+	_check("the chests hand out every find", found.size() == ItemDB.CHEST_CYCLE.size(),
+			str(found.keys()))
+	_check("every item still has a number for the wire, old ones unchanged",
+			ItemDB.ORDER.find(ItemDB.LANTERN) == 5 and ItemDB.ORDER.has(ItemDB.HEART)
+			and ItemDB.ORDER.has(ItemDB.GLOVE) and ItemDB.ORDER.has(ItemDB.NET)
+			and ItemDB.ORDER.has(ItemDB.FAN))
+
+	## Heart containers.
+	var most := hero.max_health
+	_check("a heart container is taken", hero.add_item(ItemDB.HEART))
+	_check("it adds one heart and fills the bar",
+			hero.max_health == most + Combatant.POINTS_PER_HEART and hero.health == hero.max_health,
+			"%d/%d" % [hero.health, hero.max_health])
+	_check("it is used up, not carried", not hero.has_item(ItemDB.HEART))
+	_check("a second one is welcome too", hero.can_take(ItemDB.HEART))
+	hero.max_health = ItemDB.MAX_HEARTS * Combatant.POINTS_PER_HEART
+	_check("until the bar is as long as it gets", not hero.can_take(ItemDB.HEART)
+			and not hero.add_item(ItemDB.HEART))
+	hero.max_health = most
+	hero.health = most
+
+	## The shop.
+	_check("the net is free, so anyone can start catching", ItemDB.price(ItemDB.NET) == 0)
+	_check("the shop does not sell swords", ItemDB.price(ItemDB.SWORD) < 0
+			and not hero.can_buy(ItemDB.SWORD))
+	hero.bugs = 0
+	_check("nothing can be bought without the bugs", not hero.buy(ItemDB.GLOVE)
+			and not hero.has_item(ItemDB.GLOVE))
+	_check("but the net can", hero.buy(ItemDB.NET) and hero.has_item(ItemDB.NET))
+	hero.bugs = ItemDB.price(ItemDB.GLOVE) + 1
+	_check("with the bugs, the glove is bought and paid for",
+			hero.buy(ItemDB.GLOVE) and hero.has_item(ItemDB.GLOVE) and hero.bugs == 1,
+			"%d bugs left" % hero.bugs)
+	_check("nobody buys a second one", not hero.can_buy(ItemDB.GLOVE))
+	hero.bugs = ItemDB.price(ItemDB.HEART)
+	_check("a heart can be bought", hero.buy(ItemDB.HEART) and hero.bugs == 0
+			and hero.max_health == most + Combatant.POINTS_PER_HEART)
+
+	## Bugs and the net.
+	var swarm := BugSwarm.new()
+	add_child(swarm)
+	var homes: Array[Vector3] = [Vector3(200, 0, 202), Vector3(200, 0, 190), Vector3(240, 0, 240)]
+	swarm.build(homes, _rng(5))
+	for index in swarm.count():
+		swarm._bugs[index]["radius"] = 0.0
+	swarm._place(0.0)
+	var reach := swarm.in_reach(hero.global_position, hero.facing(), PlayerCharacter.NET_REACH)
+	_check("the net reaches the bug in front and not the ones behind or far off",
+			reach.size() == 1 and reach[0] == 0, str(reach))
+	hero.bugs = 0
+	hero.equip(ItemDB.NET)
+	_check("swinging the net catches it", hero.swing_net() and hero.bugs == 1,
+			"%d bugs" % hero.bugs)
+	_check("a caught bug is out of the air", not swarm.is_flying(0) and swarm.is_flying(1))
+	_check("and cannot be caught twice", not swarm.take(0))
+	swarm._place(BugSwarm.RESPAWN_TIME + 1.0)
+	_check("it comes back after a while", swarm.is_flying(0))
+	swarm.queue_free()
+
+	## The fan.
+	hero.visual.stop_action()
+	var ahead := _a_monster()
+	ahead.global_position = hero.global_position + Vector3(0, 0, 4)
+	var behind := _a_monster()
+	behind.global_position = hero.global_position + Vector3(0, 0, -4)
+	var friend_pid := PlayerRegistry.make_pid(1, 1)
+	PlayerRegistry.add_entry(friend_pid, &"knight")
+	var friend := PlayerCharacter.new()
+	Combatant.setup_body(friend, 0.42, 1.6)
+	add_child(friend)
+	friend.configure(friend_pid, ArchetypeDB.get_archetype(&"knight"))
+	friend.global_position = hero.global_position + Vector3(1, 0, 5)
+	var blown := hero.gust_targets(hero.global_position, hero.facing())
+	_check("a gust reaches enemies and friends in front, and nobody behind",
+			blown.has(ahead) and blown.has(friend) and not blown.has(behind)
+			and not blown.has(hero), str(blown.size()))
+	hero.add_item(ItemDB.FAN)
+	var health_before := ahead.health
+	ahead.velocity = Vector3.ZERO
+	_check("the fan can be waved", hero.use_fan())
+	_check("it shoves without hurting", ahead.health == health_before and ahead.velocity.z > 5.0
+			and friend.velocity.z > 5.0, "%.1f / %.1f m/s" % [ahead.velocity.z, friend.velocity.z])
+	_check("and needs a moment before the next", not hero.use_fan()
+			and not hero.item_ready(ItemDB.FAN))
+
+	## A thrown rock.
+	var rock := Node3D.new()
+	var rock_mesh := MeshInstance3D.new()
+	rock_mesh.mesh = BoxMesh.new()
+	rock.add_child(rock_mesh)
+	var thrown := ThrownRock.new()
+	add_child(thrown)
+	thrown.launch(hero, rock, ahead.global_position + Vector3.UP * 3.0, Vector3.DOWN)
+	ahead.velocity = Vector3.ZERO
+	var friend_before := friend.health
+	var hero_before := hero.health
+	friend.global_position = ahead.global_position + Vector3(1, 0, 0)
+	hero.global_position = ahead.global_position + Vector3(-1, 0, 0)
+	var shards_before := _shards().size()
+	thrown._shatter(ahead.global_position + Vector3(0, 0, -0.5))
+	_check("a rock hurts and throws back the monster it lands on",
+			ahead.health == health_before - ThrownRock.DAMAGE
+			and Vector2(ahead.velocity.x, ahead.velocity.z).length() > 5.0,
+			"%d -> %d" % [health_before, ahead.health])
+	_check("and a player beside it", friend.health == friend_before - ThrownRock.DAMAGE)
+	_check("but not the one who threw it", hero.health == hero_before)
+	_check("it breaks into pieces made of its own mesh",
+			_shards().size() == shards_before + 1
+			and (_shards()[-1] as RockShards).mesh == rock_mesh.mesh
+			and (_shards()[-1] as RockShards).piece_count() == RockShards.COUNT)
+
+	## The hookshot's stun.
+	var stunned := Monster.new()
+	Combatant.setup_body(stunned, 0.45, 1.7)
+	add_child(stunned)
+	stunned.configure(MonsterDB.get_monster(&"skeleton_minion"))
+	_check("a monster is not stunned to begin with", not stunned.is_stunned())
+	stunned.stun(PlayerCharacter.HOOK_STUN)
+	_check("the hookshot stuns it for 300 ms", stunned.is_stunned()
+			and is_equal_approx(stunned._stun_left, 0.3))
+
+	## Sounds.
+	var silent: Array[StringName] = []
+	for id: StringName in GameSfx.RECIPES:
+		var stream := GameSfx.render(GameSfx.RECIPES[id])
+		if stream.data.size() < 1000 or _peak(stream) < 2000:
+			silent.append(id)
+	_check("every placeholder sound renders to something audible", silent.is_empty(), str(silent))
+	GameSfx.register()
+	var missing: Array[StringName] = []
+	for id: StringName in [&"attack", &"hook_fire", &"hook_grab", &"lantern", &"jump", &"hurt",
+			&"chest", &"coin", &"heart", &"item", &"rock_lift", &"rock_shatter", &"rock_throw",
+			&"fan", &"net", &"bug", &"buy"]:
+		if not SoundManager.has_sfx(id):
+			missing.append(id)
+	_check("and every one the game asks for is registered", missing.is_empty(), str(missing))
+
+	## Sound fall-off.
+	_check("a sound is full volume close by, quieter further off, and silent past earshot",
+			is_equal_approx(GameSfx.loudness(2.0), 1.0)
+			and GameSfx.loudness(15.0) < 1.0 and GameSfx.loudness(15.0) > GameSfx.loudness(30.0)
+			and GameSfx.loudness(30.0) > 0.0 and GameSfx.loudness(GameSfx.HEARING + 1.0) == 0.0,
+			"%.2f / %.2f" % [GameSfx.loudness(15.0), GameSfx.loudness(30.0)])
+	hero.global_position = Vector3(200, 0, 200)
+	friend.global_position = hero.global_position
+	_check("a sound in the world is played at the volume its distance gives it",
+			is_equal_approx(GameSfx.play_at(&"coin", Vector3(200, 0, 203)), 1.0)
+			and is_equal_approx(GameSfx.play_at(&"coin", Vector3(200, 0, 220)), GameSfx.loudness(20.0))
+			and GameSfx.play_at(&"coin", Vector3(200, 0, 300)) == 0.0)
+
+	## Voice chat and the mirror. `hero` listens on this machine; `friend` is the one talking.
+	_check("the mirror is static gear, sold at the shop and dropped on death",
+			ItemDB.is_passive(ItemDB.MIRROR) and ItemDB.STATIC.has(ItemDB.MIRROR)
+			and ItemDB.price(ItemDB.MIRROR) > 0 and ItemDB.is_droppable(ItemDB.MIRROR))
+	var ears: Array = [hero]
+	friend.global_position = hero.global_position + Vector3(0, 0, 4)
+	_check("a voice close by is at full volume",
+			is_equal_approx(VoiceChat.gain_between(friend, ears), 1.0))
+	friend.global_position = hero.global_position + Vector3(0, 0, 24)
+	var distant := VoiceChat.gain_between(friend, ears)
+	_check("it fades with distance", distant > 0.0 and distant < 0.6, "%.2f" % distant)
+	friend.global_position = hero.global_position + Vector3(0, 0, 200)
+	_check("and cannot be heard across the map", VoiceChat.gain_between(friend, ears) == 0.0)
+	friend.add_item(ItemDB.MIRROR)
+	_check("one mirror alone changes nothing", VoiceChat.gain_between(friend, ears) == 0.0)
+	hero.add_item(ItemDB.MIRROR)
+	_check("with a mirror at each end the voice carries any distance",
+			is_equal_approx(VoiceChat.gain_between(friend, ears), 1.0))
+	_check("and so does the reply", is_equal_approx(VoiceChat.gain_between(hero, [friend]), 1.0))
+	friend.remove_item(ItemDB.MIRROR)
+	_check("losing the mirror ends it", VoiceChat.gain_between(friend, ears) == 0.0)
+
+	## The voice itself: packed to a byte a sample and back, close enough to be speech.
+	var spoken := PackedFloat32Array()
+	for index in 480:
+		spoken.append(sin(index * 0.11) * 0.5)
+	var packed := VoiceChat.encode(spoken)
+	var heard := VoiceChat.decode(packed)
+	var worst := 0.0
+	for index in spoken.size():
+		worst = maxf(worst, absf(heard[index] - spoken[index]))
+	_check("a voice packet is one byte a sample and survives the trip",
+			packed.size() == spoken.size() and worst < 0.03, "worst error %.4f" % worst)
+	var stereo := PackedVector2Array()
+	for index in 400:
+		stereo.append(Vector2(0.4, 0.2))
+	var mono := VoiceChat.downsample(stereo, 4)
+	_check("the microphone is cut down to mono at a quarter of the rate",
+			mono.size() == 100 and is_equal_approx(mono[0], 0.3))
+	_check("silence is below the gate and speech above it",
+			VoiceChat.loudness(PackedFloat32Array([0.001, -0.002, 0.001])) < VoiceChat.GATE
+			and VoiceChat.loudness(spoken) > VoiceChat.GATE)
+	var chat := VoiceChat.new()
+	add_child(chat)
+	_check("voice chat is idle outside an online match", not chat.active())
+	friend.global_position = hero.global_position + Vector3(0, 0, 4)
+	_check("a packet from someone in earshot is played", chat.hear(7, friend, 12000, packed) > 0.0
+			and chat._voices.has(7))
+	friend.global_position = hero.global_position + Vector3(0, 0, 200)
+	_check("and one from out of earshot is dropped", chat.hear(7, friend, 12000, packed) == 0.0)
+	chat.queue_free()
+
+	stunned.queue_free()
+	friend.queue_free()
+
+
+func _shards() -> Array[Node]:
+	var found: Array[Node] = []
+	for node in get_tree().current_scene.get_children():
+		if node is RockShards:
+			found.append(node)
+	return found
+
+
+func _peak(stream: AudioStreamWAV) -> int:
+	var peak := 0
+	for index in range(0, stream.data.size() - 1, 2):
+		peak = maxi(peak, absi(stream.data.decode_s16(index)))
+	return peak
 
 
 func _rng(value: int) -> RandomNumberGenerator:

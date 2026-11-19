@@ -116,6 +116,10 @@ report_bug={
 3d/default_gravity=24.0
 common/physics_interpolation=true
 
+[audio]
+
+driver/enable_input=true
+
 [rendering]
 
 textures/canvas_textures/default_texture_filter=0

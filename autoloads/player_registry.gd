@@ -25,6 +25,8 @@ func _ready() -> void:
 	## The per-player input actions live in code, not project.godot, so they have to exist
 	## before anything -- a match, a test, the playtest -- reads or presses one.
 	PlayerBindings.reapply()
+	## Options > Nintendo Layout moves the lettered buttons; the players' buttons move with it.
+	SaveManager.keybinds_changed.connect(PlayerBindings.reapply)
 
 
 static func make_pid(peer_id: int, slot: int) -> int:
