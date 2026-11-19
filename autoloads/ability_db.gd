@@ -13,8 +13,8 @@ var _abilities: Dictionary = {}
 func _ready() -> void:
 	# --- the sword: the one attack every player has, free so nobody is ever helpless ---
 	_add(_make(&"sword_swing", "Sword Swing", AbilityData.Shape.MELEE_ARC, {
-		"damage": 2, "knockback": 7.0, "range": 3.0, "arc_degrees": 65.0, "cooldown": 0.55,
-		"wind_up": 0.22, "animation": "melee/Melee_1H_Attack_Chop",
+		"damage": 2, "knockback": 7.0, "range": 3.8, "arc_degrees": 80.0, "cooldown": 0.55,
+		"wind_up": 0.22, "animation": "melee/Melee_1H_Attack_Slice_Horizontal",
 	}))
 
 	# --- monster attacks live here too, so knockback tuning is all on one screen ---

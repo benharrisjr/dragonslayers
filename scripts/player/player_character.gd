@@ -449,9 +449,10 @@ func use_ability(index: int) -> bool:
 	ability_used.emit(index, ability)
 
 	var aim := _aim_direction(ability)
+	_show_slash(ability, aim)
 	if NetworkManager.is_networked():
 		_request_ability.rpc_id(1, String(ability.id), global_position, aim)
-		_show_ability.rpc(String(ability.id))
+		_show_ability.rpc(String(ability.id), aim)
 	else:
 		_request_ability(String(ability.id), global_position, aim)
 	return true
@@ -479,11 +480,22 @@ func _aim_direction(ability: AbilityData) -> Vector3:
 
 
 @rpc("authority", "call_remote", "reliable")
-func _show_ability(ability_id: String) -> void:
+func _show_ability(ability_id: String, aim: Vector3) -> void:
 	var ability := AbilityDB.get_ability(StringName(ability_id))
 	if ability != null and visual != null:
 		visual.play_action(ability.animation, ability.animation_speed)
 		GameSfx.play_at(&"attack", global_position)
+		_show_slash(ability, aim)
+
+
+## The swing's arc trail, timed to land with the wind-up and drawn across the attack's real reach.
+func _show_slash(ability: AbilityData, aim: Vector3) -> void:
+	if ability.shape != AbilityData.Shape.MELEE_ARC:
+		return
+	var trail := SlashTrail.new()
+	GameWorld.effects_root(get_tree()).add_child(trail)
+	trail.swing(self, aim, ability.range, ability.arc_degrees,
+			maxf(ability.wind_up - SlashTrail.SWEEP * 0.5, 0.0))
 
 
 @rpc("any_peer", "call_local", "reliable")

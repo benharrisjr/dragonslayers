@@ -236,7 +236,7 @@ func _teardown_match() -> void:
 	## Effects in flight belong to the match that fired them.
 	for node in get_children():
 		if node is Projectile or node is FirePatch or node is ThrownRock or node is Gust \
-				or node is RockShards:
+				or node is RockShards or node is SlashTrail:
 			node.queue_free()
 
 
