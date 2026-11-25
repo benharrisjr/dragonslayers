@@ -32,7 +32,9 @@ static func arc_targets(tree: SceneTree, attacker: Combatant, origin: Vector3,
 		## also has a collision capsule.
 		if distance > ability.range + candidate.hit_radius or distance < 0.0001:
 			continue
-		if flat_facing.dot(offset / distance) < cos_limit:
+		## A half-angle of 180 degrees is a full circle. Compared as a dot product it would be
+		## "at least -1", which something dead behind can miss by a rounding error.
+		if ability.arc_degrees < 180.0 and flat_facing.dot(offset / distance) < cos_limit:
 			continue
 		out.append(candidate)
 	return out
@@ -70,13 +72,19 @@ static func apply(ability: AbilityData, attacker: Combatant, targets: Array[Comb
 
 
 static func _candidates(tree: SceneTree, attacker: Combatant) -> Array:
-	var group := "monsters" if attacker.faction == Combatant.Faction.PLAYER else "players"
+	## A player's swing reaches monsters and other players alike (Combatant.can_hit).
+	var groups: Array[String] = ["players"]
+	if attacker.faction == Combatant.Faction.PLAYER:
+		groups.append("monsters")
+	var nodes: Array = []
+	for group in groups:
+		nodes.append_array(tree.get_nodes_in_group(group))
 	var out: Array = []
-	for node in tree.get_nodes_in_group(group):
+	for node in nodes:
 		var candidate := node as Combatant
 		## Faction is checked as well as the group. The group is an index for speed; hostility
 		## is the actual rule, and trusting the index alone is what turned a mis-filed player
 		## into a legal target for its own friends.
-		if candidate != null and candidate != attacker and attacker.is_hostile_to(candidate):
+		if candidate != null and candidate != attacker and attacker.can_hit(candidate):
 			out.append(candidate)
 	return out

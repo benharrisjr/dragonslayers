@@ -8,7 +8,8 @@ extends Control
 ## driven by their own controls, and stops nobody else. Stick left and right moves along the
 ## stock; jump or any attack button buys; interact (the button that opened it) closes it.
 
-const CELL_SIZE := Vector2(88, 112)
+const CELL_SIZE := Vector2(88, 100)
+const COLUMNS := 5
 const GOLD := Color(1.0, 0.9, 0.6)
 const BUG_COLOR := Color(0.6, 0.95, 0.5)
 
@@ -44,7 +45,7 @@ func _process(_delta: float) -> void:
 	if _just_opened:
 		_just_opened = false
 		return
-	var step := _input.menu_step()
+	var step := _input.menu_step() + _input.menu_step_vertical() * COLUMNS
 	if step != 0:
 		_selected = posmod(_selected + step, ItemDB.SHOP_STOCK.size())
 		_refresh()
@@ -95,9 +96,12 @@ func _build() -> void:
 	_purse = _label("", 15, BUG_COLOR)
 	column.add_child(_purse)
 
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	## In rows of five: ten items in one row is wider than a quarter-screen pane.
+	var row := GridContainer.new()
+	row.columns = COLUMNS
+	row.add_theme_constant_override("h_separation", 8)
+	row.add_theme_constant_override("v_separation", 8)
+	row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(row)
 	for id in ItemDB.SHOP_STOCK:
@@ -120,6 +124,8 @@ func _build() -> void:
 				"price": price})
 
 	_detail = _label("", 15, Color(0.9, 0.93, 0.9))
+	_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_detail.custom_minimum_size = Vector2(COLUMNS * (CELL_SIZE.x + 8.0), 0.0)
 	column.add_child(_detail)
 	_hint = _label("", 12, Color(0.65, 0.7, 0.7))
 	column.add_child(_hint)
@@ -176,4 +182,5 @@ func _refresh() -> void:
 	var on_pad := PlayerBindings.on_pad(slot)
 	var confirm := PlayerBindings.jump_label() if on_pad else "Space / click"
 	var close := "D-pad Up" if on_pad else "F"
-	_hint.text = "Left / right: choose    %s: buy    %s: leave" % [confirm, close]
+	_hint.text = "Stick / D-pad: choose    %s: buy    %s: leave" % [confirm, close] if on_pad \
+			else "WASD: choose    %s: buy    %s: leave" % [confirm, close]

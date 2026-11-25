@@ -29,6 +29,11 @@ var gold: int = 0:
 			gold_changed.emit(gold)
 
 
+## The saved world being played, on the host (or offline). Null in an unsaved match and always
+## on a client: the host owns the save, and catches clients up (GameWorld._request_catch_up).
+var world: WorldSave = null
+
+
 func reset_for_match(new_seed: int) -> void:
 	world_seed = new_seed
 	gold = 0

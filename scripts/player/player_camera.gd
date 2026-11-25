@@ -55,6 +55,8 @@ var pitch_offset: float = 0.0
 ## How far out the camera currently sits after collision; negative until first placed.
 var _pulled_distance: float = -1.0
 var _frame_delta: float = 0.0
+## This pane's underground look, made the first time its player goes into a dungeon.
+var _dungeon_env: Environment
 
 
 func setup(target: PlayerCharacter, slot: int) -> void:
@@ -87,7 +89,7 @@ func _process(delta: float) -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	_frame_delta = delta
-	## Holding the wheel button hands the camera's stick (and Q / E) to the gear wheel.
+	## Holding the wheel button hands the camera's stick (and Z / C) to the gear wheel.
 	if _input != null and not player.wheel_open and not _input.wheel_held():
 		yaw -= _input.camera_turn() * TURN_SPEED * delta
 		pitch_offset = clampf(pitch_offset + _input.camera_pitch() * STICK_PITCH_SPEED * delta,
@@ -105,8 +107,25 @@ func _process(delta: float) -> void:
 	var dragon := _dragon()
 	if dragon != null and _boss_framing > 0.0:
 		focus = focus.lerp(focus.lerp(dragon.hit_centre(), 0.35), _boss_framing)
-	_smoothed_focus = _smoothed_focus.lerp(focus, 1.0 - exp(-FOLLOW_SHARPNESS * delta))
+	## Through a door is a cut, not a swoop across the map.
+	if _smoothed_focus.distance_to(focus) > 40.0:
+		_smoothed_focus = focus
+		_pulled_distance = -1.0
+	else:
+		_smoothed_focus = _smoothed_focus.lerp(focus, 1.0 - exp(-FOLLOW_SHARPNESS * delta))
+	_update_underground()
 	_apply()
+
+
+## In a dungeon this pane's camera trades the sky for the dark (Dungeon.make_environment). Per
+## camera, so a split-screen partner still out on the map keeps the daylight.
+func _update_underground() -> void:
+	var underground := Dungeon.containing(get_tree(), player.global_position) != null
+	if underground == (camera.environment != null):
+		return
+	if underground and _dungeon_env == null:
+		_dungeon_env = Dungeon.make_environment()
+	camera.environment = _dungeon_env if underground else null
 
 
 func _dragon() -> Dragon:
@@ -163,7 +182,7 @@ func _apply() -> void:
 	camera.look_at(_smoothed_focus, Vector3.UP)
 
 
-## Free-look from a right-button drag. Horizontal movement does exactly what Q and E do, so the
+## Free-look from a right-button drag. Horizontal movement does exactly what Z and C do, so the
 ## two controls stay consistent; vertical movement tilts within PITCH_RANGE of the current
 ## framing. Fed in by SplitScreen, which owns the one mouse and decides whose pane it is in.
 func apply_mouse_look(motion: Vector2) -> void:

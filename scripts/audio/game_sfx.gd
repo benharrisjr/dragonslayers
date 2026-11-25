@@ -83,6 +83,25 @@ const RECIPES: Dictionary = {
 		["hiss", 0.19, 0.04, 3000.0, 3000.0, 0.3, 0.001, 1.0],
 		["hiss", 0.3, 0.05, 3500.0, 3500.0, 0.22, 0.001, 1.0],
 	],
+	&"bomb": [
+		["noise", 0.0, 0.9, 2400.0, 120.0, 0.95, 0.002, 1.8],
+		["sine", 0.0, 0.6, 90.0, 32.0, 0.7, 0.002, 1.3],
+		["square", 0.0, 0.18, 160.0, 50.0, 0.3, 0.001, 1.0],
+	],
+	&"door": [
+		["noise", 0.0, 0.5, 220.0, 120.0, 0.55, 0.05, 1.4],
+		["sine", 0.0, 0.4, 70.0, 55.0, 0.4, 0.02, 1.2],
+	],
+	&"secret": [
+		["tri", 0.0, 0.12, 784.0, 784.0, 0.26, 0.004, 0.8],
+		["tri", 0.1, 0.12, 740.0, 740.0, 0.26, 0.004, 0.8],
+		["tri", 0.2, 0.12, 622.0, 622.0, 0.26, 0.004, 0.8],
+		["tri", 0.3, 0.12, 440.0, 440.0, 0.26, 0.004, 0.8],
+		["tri", 0.4, 0.12, 415.0, 415.0, 0.26, 0.004, 0.8],
+		["tri", 0.5, 0.12, 659.0, 659.0, 0.26, 0.004, 0.8],
+		["tri", 0.6, 0.12, 831.0, 831.0, 0.26, 0.004, 0.8],
+		["tri", 0.7, 0.4, 1047.0, 1047.0, 0.3, 0.004, 1.8],
+	],
 	&"fan": [
 		["noise", 0.0, 0.65, 500.0, 3600.0, 0.6, 0.16, 1.3],
 		["hiss", 0.05, 0.45, 2500.0, 5000.0, 0.2, 0.15, 1.2],
@@ -98,6 +117,60 @@ const RECIPES: Dictionary = {
 		["tri", 0.0, 0.08, 1047.0, 1047.0, 0.28, 0.003, 0.8],
 		["tri", 0.07, 0.08, 1319.0, 1319.0, 0.28, 0.003, 0.8],
 		["tri", 0.14, 0.26, 1568.0, 1568.0, 0.3, 0.003, 1.8],
+	],
+	## The dragon. A low growl that swells and breaks into a rasp, with a deep thump under it.
+	&"roar": [
+		["saw", 0.0, 1.7, 95.0, 58.0, 0.42, 0.18, 1.1],
+		["square", 0.05, 1.5, 62.0, 44.0, 0.22, 0.2, 1.0],
+		["noise", 0.1, 1.5, 700.0, 260.0, 0.75, 0.25, 1.3],
+		["hiss", 0.25, 1.1, 1200.0, 600.0, 0.25, 0.3, 1.5],
+		["sine", 0.0, 0.5, 48.0, 36.0, 0.45, 0.02, 1.2],
+	],
+	## Great wings beating as it takes off.
+	&"wings": [
+		["noise", 0.0, 0.35, 420.0, 180.0, 0.7, 0.08, 1.6],
+		["noise", 0.45, 0.35, 420.0, 180.0, 0.65, 0.08, 1.6],
+		["noise", 0.9, 0.35, 420.0, 180.0, 0.55, 0.08, 1.6],
+	],
+	## A charge is full: a quick bright chime.
+	&"charged": [
+		["tri", 0.0, 0.08, 1319.0, 1319.0, 0.25, 0.002, 0.8],
+		["tri", 0.06, 0.25, 1976.0, 1976.0, 0.28, 0.002, 1.8],
+	],
+	## A spin: one long whoosh, rising and falling.
+	&"spin": [
+		["hiss", 0.0, 0.45, 900.0, 4500.0, 0.5, 0.12, 1.1],
+		["sine", 0.0, 0.3, 220.0, 120.0, 0.15, 0.02, 1.0],
+	],
+	## Knives or arrows loosed all at once: a rattle of short hisses.
+	&"flurry": [
+		["hiss", 0.0, 0.06, 3000.0, 5000.0, 0.4, 0.002, 1.2],
+		["hiss", 0.05, 0.06, 2800.0, 5000.0, 0.35, 0.002, 1.2],
+		["hiss", 0.1, 0.06, 3200.0, 5000.0, 0.35, 0.002, 1.2],
+		["hiss", 0.15, 0.08, 2600.0, 5000.0, 0.3, 0.002, 1.4],
+	],
+	## The mage's ring: a shimmer sweeping up.
+	&"arcane": [
+		["sine", 0.0, 0.5, 330.0, 990.0, 0.3, 0.05, 1.2],
+		["tri", 0.05, 0.45, 660.0, 1980.0, 0.15, 0.05, 1.4],
+		["hiss", 0.15, 0.3, 4000.0, 7000.0, 0.15, 0.05, 1.5],
+	],
+	## Falling into the river.
+	&"splash": [
+		["noise", 0.0, 0.45, 2400.0, 500.0, 0.75, 0.005, 1.6],
+		["hiss", 0.05, 0.35, 3000.0, 6000.0, 0.3, 0.01, 1.4],
+	],
+	&"boomerang": [
+		["hiss", 0.0, 0.5, 1800.0, 3200.0, 0.3, 0.05, 0.8],
+		["sine", 0.0, 0.45, 260.0, 300.0, 0.12, 0.03, 0.6],
+	],
+	&"leaves": [
+		["hiss", 0.0, 0.22, 2500.0, 5500.0, 0.32, 0.02, 1.4],
+		["noise", 0.03, 0.18, 1800.0, 900.0, 0.18, 0.01, 1.2],
+	],
+	&"grass_cut": [
+		["hiss", 0.0, 0.12, 3000.0, 7000.0, 0.45, 0.004, 1.6],
+		["hiss", 0.05, 0.1, 4000.0, 6500.0, 0.3, 0.004, 1.6],
 	],
 	&"deny": [
 		["square", 0.0, 0.09, 150.0, 150.0, 0.25, 0.003, 0.6],
@@ -133,14 +206,16 @@ static func loudness(distance: float) -> float:
 
 
 ## Plays a sound that happened at a place in the world, as loud as it is to the nearest player
-## on this machine. Returns that volume, 0 (and nothing played) if nobody is in earshot.
-static func play_at(id: StringName, position: Vector3) -> float:
+## on this machine. Returns that volume, 0 (and nothing played) if nobody is in earshot. `reach`
+## stretches the distances for something louder than ordinary: a dragon's roar at 3 is heard at
+## full volume within 18 m and fades out by 114 m.
+static func play_at(id: StringName, position: Vector3, reach: float = 1.0) -> float:
 	var nearest := INF
 	for pid in PlayerRegistry.local_pids():
 		var body := PlayerRegistry.body_of(pid)
 		if body != null and is_instance_valid(body):
 			nearest = minf(nearest, (body as Node3D).global_position.distance_to(position))
-	var volume := loudness(nearest)
+	var volume := loudness(nearest / maxf(reach, 0.01))
 	if volume > 0.0:
 		play(id, volume)
 	return volume

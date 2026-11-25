@@ -21,6 +21,9 @@ enum Mode { OFFLINE, HOST, CLIENT }
 var mode: Mode = Mode.OFFLINE
 ## How many split-screen players this machine contributes.
 var local_slot_count: int = 1
+## The hero each of this machine's players picked in the character select, by slot. A slot
+## past the end of the list (command-line starts, tests) gets ArchetypeDB's default.
+var local_heroes: Array[StringName] = []
 
 
 func _ready() -> void:
@@ -95,7 +98,55 @@ func _register_local_players() -> void:
 	var peer_id := local_peer_id()
 	for slot in local_slot_count:
 		var pid := PlayerRegistry.make_pid(peer_id, slot)
-		PlayerRegistry.add_entry(pid, ArchetypeDB.default_for_slot(slot))
+		PlayerRegistry.add_entry(pid, hero_for_slot(slot))
+
+
+## Seats one more player on this machine in the middle of a match -- someone picking up a spare
+## controller. They get the first hero nobody here is playing. Offline or hosting they are in
+## the roster at once (and, hosting, everyone is told); as a client the host is asked, and they
+## arrive with its reply. Returns their pid, or -1 if every seat here is taken.
+func add_local_player() -> int:
+	if local_slot_count >= PlayerRegistry.MAX_LOCAL_SLOTS:
+		return -1
+	var slot := local_slot_count
+	var taken: Array[StringName] = []
+	for other in local_slot_count:
+		taken.append(hero_for_slot(other))
+	var hero := ArchetypeDB.default_for_slot(slot)
+	for candidate in ArchetypeDB.ORDER:
+		if not taken.has(candidate):
+			hero = candidate
+			break
+	while local_heroes.size() < slot:
+		local_heroes.append(hero_for_slot(local_heroes.size()))
+	if local_heroes.size() == slot:
+		local_heroes.append(hero)
+	else:
+		local_heroes[slot] = hero
+	local_slot_count += 1
+	var pid := PlayerRegistry.make_pid(local_peer_id(), slot)
+	if mode == Mode.CLIENT:
+		_announce_local_players.rpc_id(1, local_slot_count, _local_hero_names())
+	else:
+		PlayerRegistry.add_entry(pid, hero)
+		if is_networked():
+			_receive_roster.rpc(_serialise_roster(), GameState.world_seed)
+	connection_changed.emit()
+	return pid
+
+
+## The hero this machine's player in `slot` picked, or the default for that slot.
+func hero_for_slot(slot: int) -> StringName:
+	if slot < local_heroes.size() and ArchetypeDB.has(local_heroes[slot]):
+		return local_heroes[slot]
+	return ArchetypeDB.default_for_slot(slot)
+
+
+func _local_hero_names() -> Array:
+	var names: Array = []
+	for slot in local_slot_count:
+		names.append(String(hero_for_slot(slot)))
+	return names
 
 
 # --- roster replication -------------------------------------------------------------------
@@ -120,7 +171,7 @@ func _on_peer_disconnected(peer_id: int) -> void:
 
 
 func _on_connected_to_server() -> void:
-	_announce_local_players.rpc_id(1, local_slot_count)
+	_announce_local_players.rpc_id(1, local_slot_count, _local_hero_names())
 	connection_changed.emit()
 
 
@@ -137,14 +188,19 @@ func _on_server_disconnected() -> void:
 
 
 @rpc("any_peer", "call_remote", "reliable")
-func _announce_local_players(slots: int) -> void:
+func _announce_local_players(slots: int, heroes: Array) -> void:
 	if not is_host():
 		return
 	var peer_id := multiplayer.get_remote_sender_id()
 	var count := clampi(slots, 1, PlayerRegistry.MAX_LOCAL_SLOTS)
 	for slot in count:
 		var pid := PlayerRegistry.make_pid(peer_id, slot)
-		PlayerRegistry.add_entry(pid, ArchetypeDB.default_for_slot(PlayerRegistry.roster.size()))
+		## Whoever they picked, as long as it is a hero this build knows about. Two players may
+		## pick the same one.
+		var hero := StringName(str(heroes[slot])) if slot < heroes.size() else &""
+		if not ArchetypeDB.has(hero):
+			hero = ArchetypeDB.default_for_slot(PlayerRegistry.roster.size())
+		PlayerRegistry.add_entry(pid, hero)
 	_receive_roster.rpc(_serialise_roster(), GameState.world_seed)
 	connection_changed.emit()
 

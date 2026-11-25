@@ -62,17 +62,28 @@ func _report() -> void:
 	for chunk in world.chunks:
 		fingerprint = hash([fingerprint, chunk.biome.id, chunk.heights, chunk.terrain.slopes])
 
+	var opened := 0
+	for chest in get_tree().get_nodes_in_group("chests"):
+		if (chest as TreasureChest).is_open:
+			opened += 1
 	print("%s seed=%d peers=%d players=%d monsters=%d chests=%d dragon=%s terrain=%d" % [
 		role, GameState.world_seed, PlayerRegistry.roster.size(),
 		PlayerRegistry.bodies.size(), monsters, chests,
 		"yes" if world.dragon != null else "no", fingerprint])
+	## Progress, which a saved world restores on the host and a joiner is caught up on.
+	print("   %s opened=%d gold=%d found=%d dungeons=%d" % [role, opened, GameState.gold,
+			DungeonEntrance.revealed_names(get_tree()).size(), world.dungeons.size()])
+	var dragon := world.dragon if world != null else null
+	if dragon != null:
+		print("   %s dragon flying=%s at %s" % [role, dragon.is_flying(),
+				dragon.global_position.snapped(Vector3.ONE * 0.1)])
 	print("   %s heard voices from machines %s" % [role, (main.voice as VoiceChat)._voices.keys()])
 	for pid in PlayerRegistry.all_pids():
 		var body := PlayerRegistry.body_of(pid) as PlayerCharacter
 		if body == null:
 			print("   %s player %d has no body" % [role, pid])
 			continue
-		print("   %s player %d at %s hp=%d/%d gear=%s" % [role, pid,
+		print("   %s player %d (%s) at %s hp=%d/%d gear=%s" % [role, pid, body.archetype.id,
 				body.global_position.snapped(Vector3.ONE * 0.1), body.health, body.max_health,
 				",".join(body.gear)])
 

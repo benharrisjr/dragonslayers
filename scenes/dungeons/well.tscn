@@ -1,0 +1,722 @@
+[gd_scene load_steps=15 format=3]
+
+[ext_resource type="Script" path="res://scripts/dungeons/dungeon.gd" id="dungeon"]
+[ext_resource type="Script" path="res://scripts/dungeons/monster_spot.gd" id="monster"]
+[ext_resource type="Script" path="res://scripts/dungeons/chest_spot.gd" id="chest"]
+[ext_resource type="Script" path="res://scripts/dungeons/door_spot.gd" id="door"]
+
+[sub_resource type="StandardMaterial3D" id="mat_floor"]
+albedo_color = Color(0.36, 0.33, 0.31, 1)
+roughness = 0.95
+
+[sub_resource type="StandardMaterial3D" id="mat_hall"]
+albedo_color = Color(0.3, 0.28, 0.27, 1)
+roughness = 0.95
+
+[sub_resource type="StandardMaterial3D" id="mat_wall"]
+albedo_color = Color(0.55, 0.32, 0.25, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="mat_trim"]
+albedo_color = Color(0.3, 0.26, 0.24, 1)
+roughness = 0.8
+
+[sub_resource type="StandardMaterial3D" id="mat_rug"]
+albedo_color = Color(0.5, 0.18, 0.16, 1)
+roughness = 1
+
+[sub_resource type="StandardMaterial3D" id="mat_flame"]
+albedo_color = Color(1, 0.6, 0.2, 1)
+shading_mode = 0
+emission_enabled = true
+emission = Color(1, 0.6, 0.2, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="CylinderMesh" id="mesh_bowl"]
+top_radius = 0.42
+bottom_radius = 0.22
+height = 0.35
+radial_segments = 10
+material = SubResource("mat_trim")
+
+[sub_resource type="CylinderMesh" id="mesh_stand"]
+top_radius = 0.08
+bottom_radius = 0.14
+height = 1.0
+radial_segments = 6
+material = SubResource("mat_trim")
+
+[sub_resource type="SphereMesh" id="mesh_flame"]
+radius = 0.26
+height = 0.6
+radial_segments = 8
+rings = 4
+material = SubResource("mat_flame")
+
+[sub_resource type="PlaneMesh" id="mesh_rug"]
+size = Vector2(3, 6)
+material = SubResource("mat_rug")
+
+[node name="Dungeon" type="Node3D"]
+script = ExtResource("dungeon")
+dungeon_id = &"well"
+display_name = "The Old Well"
+reward_item = &"bomb"
+
+[node name="Geometry" type="Node3D" parent="."]
+
+[node name="Decor" type="Node3D" parent="."]
+
+[node name="Spots" type="Node3D" parent="."]
+
+[node name="Room0" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, -0.5, 45)
+use_collision = true
+size = Vector3(12, 1, 10)
+material = SubResource("mat_floor")
+
+[node name="Room1" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, -0.5, 24)
+use_collision = true
+size = Vector3(24, 1, 12)
+material = SubResource("mat_floor")
+
+[node name="Room2" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, -0.5, 22)
+use_collision = true
+size = Vector3(14, 1, 16)
+material = SubResource("mat_floor")
+
+[node name="Room3" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34, -0.5, -7)
+use_collision = true
+size = Vector3(28, 1, 22)
+material = SubResource("mat_floor")
+
+[node name="Hall0" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, -0.49, 35)
+use_collision = true
+size = Vector3(4, 1, 10)
+material = SubResource("mat_hall")
+
+[node name="Hall1" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, -0.49, 24)
+use_collision = true
+size = Vector3(10, 1, 4)
+material = SubResource("mat_hall")
+
+[node name="Hall2" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34, -0.49, 9)
+use_collision = true
+size = Vector3(4, 1, 10)
+material = SubResource("mat_hall")
+
+[node name="Wall0" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34, 1.1, -18.3)
+use_collision = true
+size = Vector3(28.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall1" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 26, 1.1, 4.3)
+use_collision = true
+size = Vector3(12.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall2" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 42, 1.1, 4.3)
+use_collision = true
+size = Vector3(12.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall3" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 1.1, 13.7)
+use_collision = true
+size = Vector3(4.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall4" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1.1, 13.7)
+use_collision = true
+size = Vector3(6.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall5" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 1.1, 17.7)
+use_collision = true
+size = Vector3(24.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall6" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1.1, 21.7)
+use_collision = true
+size = Vector3(10.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall7" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1.1, 26.3)
+use_collision = true
+size = Vector3(10.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall8" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1, 1.1, 30.3)
+use_collision = true
+size = Vector3(10.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall9" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1.1, 30.3)
+use_collision = true
+size = Vector3(10.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall10" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1.1, 30.3)
+use_collision = true
+size = Vector3(14.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall11" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 1.1, 39.7)
+use_collision = true
+size = Vector3(4.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall12" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 1.1, 39.7)
+use_collision = true
+size = Vector3(4.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall13" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 1.1, 50.3)
+use_collision = true
+size = Vector3(12.6, 4.2, 0.6)
+material = SubResource("mat_wall")
+
+[node name="Wall14" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.3, 1.1, 24)
+use_collision = true
+size = Vector3(0.6, 4.2, 12.6)
+material = SubResource("mat_wall")
+
+[node name="Wall15" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.3, 1.1, 45)
+use_collision = true
+size = Vector3(0.6, 4.2, 10.6)
+material = SubResource("mat_wall")
+
+[node name="Wall16" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.7, 1.1, 35)
+use_collision = true
+size = Vector3(0.6, 4.2, 10.6)
+material = SubResource("mat_wall")
+
+[node name="Wall17" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.3, 1.1, 35)
+use_collision = true
+size = Vector3(0.6, 4.2, 10.6)
+material = SubResource("mat_wall")
+
+[node name="Wall18" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 12.3, 1.1, 45)
+use_collision = true
+size = Vector3(0.6, 4.2, 10.6)
+material = SubResource("mat_wall")
+
+[node name="Wall19" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18.3, 1.1, 20)
+use_collision = true
+size = Vector3(0.6, 4.2, 4.6)
+material = SubResource("mat_wall")
+
+[node name="Wall20" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18.3, 1.1, 28)
+use_collision = true
+size = Vector3(0.6, 4.2, 4.6)
+material = SubResource("mat_wall")
+
+[node name="Wall21" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19.7, 1.1, -7)
+use_collision = true
+size = Vector3(0.6, 4.2, 22.6)
+material = SubResource("mat_wall")
+
+[node name="Wall22" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27.7, 1.1, 18)
+use_collision = true
+size = Vector3(0.6, 4.2, 8.6)
+material = SubResource("mat_wall")
+
+[node name="Wall23" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27.7, 1.1, 28)
+use_collision = true
+size = Vector3(0.6, 4.2, 4.6)
+material = SubResource("mat_wall")
+
+[node name="Wall24" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.7, 1.1, 9)
+use_collision = true
+size = Vector3(0.6, 4.2, 10.6)
+material = SubResource("mat_wall")
+
+[node name="Wall25" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.3, 1.1, 9)
+use_collision = true
+size = Vector3(0.6, 4.2, 10.6)
+material = SubResource("mat_wall")
+
+[node name="Wall26" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 42.3, 1.1, 22)
+use_collision = true
+size = Vector3(0.6, 4.2, 16.6)
+material = SubResource("mat_wall")
+
+[node name="Wall27" type="CSGBox3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 48.3, 1.1, -7)
+use_collision = true
+size = Vector3(0.6, 4.2, 22.6)
+material = SubResource("mat_wall")
+
+[node name="Pillar0" type="CSGCylinder3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 26, 1.6, -12)
+use_collision = true
+radius = 0.6
+height = 3.2
+sides = 10
+material = SubResource("mat_trim")
+
+[node name="Pillar1" type="CSGCylinder3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 42, 1.6, -12)
+use_collision = true
+radius = 0.6
+height = 3.2
+sides = 10
+material = SubResource("mat_trim")
+
+[node name="Pillar2" type="CSGCylinder3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 26, 1.6, 0)
+use_collision = true
+radius = 0.6
+height = 3.2
+sides = 10
+material = SubResource("mat_trim")
+
+[node name="Pillar3" type="CSGCylinder3D" parent="Geometry"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 42, 1.6, 0)
+use_collision = true
+radius = 0.6
+height = 3.2
+sides = 10
+material = SubResource("mat_trim")
+
+[node name="Rug" type="MeshInstance3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34, 0.02, -10.5)
+mesh = SubResource("mesh_rug")
+
+[node name="Brazier0" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.3, 0, 41.3)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier0"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier0"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier0"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier0"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier1" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.7, 0, 41.3)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier1"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier1"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier1"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier1"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier2" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.3, 0, 48.7)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier2"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier2"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier2"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier2"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier3" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.7, 0, 48.7)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier3"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier3"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier3"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier3"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier4" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.7, 0, 19.3)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier4"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier4"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier4"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier4"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier5" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 16.7, 0, 19.3)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier5"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier5"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier5"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier5"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier6" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.7, 0, 28.7)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier6"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier6"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier6"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier6"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier7" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 16.7, 0, 28.7)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier7"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier7"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier7"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier7"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier8" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29.3, 0, 15.3)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier8"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier8"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier8"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier8"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier9" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40.7, 0, 15.3)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier9"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier9"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier9"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier9"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier10" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29.3, 0, 28.7)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier10"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier10"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier10"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier10"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier11" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40.7, 0, 28.7)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier11"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier11"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier11"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier11"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier12" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21.3, 0, -16.7)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier12"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier12"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier12"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier12"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier13" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 46.7, 0, -16.7)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier13"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier13"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier13"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier13"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier14" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21.3, 0, 2.7)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier14"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier14"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier14"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier14"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Brazier15" type="Node3D" parent="Decor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 46.7, 0, 2.7)
+
+[node name="Stand" type="MeshInstance3D" parent="Decor/Brazier15"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+mesh = SubResource("mesh_stand")
+
+[node name="Bowl" type="MeshInstance3D" parent="Decor/Brazier15"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("mesh_bowl")
+
+[node name="Flame" type="MeshInstance3D" parent="Decor/Brazier15"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.42, 0)
+mesh = SubResource("mesh_flame")
+
+[node name="Light" type="OmniLight3D" parent="Decor/Brazier15"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(1, 0.72, 0.42, 1)
+light_energy = 1.6
+omni_range = 10.0
+omni_attenuation = 1.2
+
+[node name="Exit" type="Marker3D" parent="."]
+transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 6, 0, 49.65)
+script = ExtResource("door")
+
+[node name="Entry" type="Marker3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0, 45.5)
+
+[node name="Monster0" type="Marker3D" parent="Spots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 22)
+script = ExtResource("monster")
+monster_id = &"skeleton_minion"
+
+[node name="Monster1" type="Marker3D" parent="Spots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 12, 0, 26)
+script = ExtResource("monster")
+monster_id = &"skeleton_minion"
+
+[node name="Monster2" type="Marker3D" parent="Spots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0, 20)
+script = ExtResource("monster")
+monster_id = &"skeleton_rogue"
+
+[node name="Monster3" type="Marker3D" parent="Spots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36, 0, 18)
+script = ExtResource("monster")
+monster_id = &"skeleton_minion"
+
+[node name="Monster4" type="Marker3D" parent="Spots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 0, 26)
+script = ExtResource("monster")
+monster_id = &"skeleton_rogue"
+
+[node name="Boss" type="Marker3D" parent="Spots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34, 0, -6)
+script = ExtResource("monster")
+monster_id = &"skeleton_champion"
+boss = true
+
+[node name="Chest0" type="Marker3D" parent="Spots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0, 20)
+script = ExtResource("chest")
+gold = 20
+
+[node name="Chest1" type="Marker3D" parent="Spots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0, 28)
+script = ExtResource("chest")
+gold = 25
+
+[node name="BigChest" type="Marker3D" parent="Spots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34, 0, -15)
+script = ExtResource("chest")
+big = true
+gold = 60

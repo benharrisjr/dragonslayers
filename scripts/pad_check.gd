@@ -76,8 +76,13 @@ func _run() -> void:
 	_expect(PadCursor.get_snapped() == local_button, "D-pad up brings it back")
 
 	_expect(await _click(main.lobby._first_focus[LobbyScreen.Step.MODE],
+			func() -> bool: return main.lobby._step == LobbyScreen.Step.WORLD),
+			"A on Local game opens the world step")
+	await _wait(0.3)
+	await _shot("2c_lobby_world")
+	_expect(await _click(main.lobby._first_focus[LobbyScreen.Step.WORLD],
 			func() -> bool: return main.lobby._step == LobbyScreen.Step.SEATS),
-			"A on Local game opens the seat step")
+			"A on New world opens the seat step")
 	_expect(not main.lobby.is_in_group(PadCursor.BLOCK_GROUP), "the seat step keeps the pad cursor")
 	await _wait(0.5)
 
@@ -96,19 +101,49 @@ func _run() -> void:
 	_expect(main.lobby.seats().is_empty(), "Nintendo layout: the bottom button (its B) gives it back")
 	_set_nintendo(false)
 
-	## Joining puts the hand on Start; the D-pad reaches Back; A on Start begins.
+	## The seat is also the character select: up and down choose, A locks in, Start begins.
 	await _tap(JOY_BUTTON_A)
 	await _wait(0.2)
-	var start_button: Control = main.lobby._seat_start.get_focus_target()
-	_expect(PadCursor.get_snapped() == start_button, "joining puts the hand on Start")
-	await _tap(JOY_BUTTON_DPAD_LEFT)
-	_expect(PadCursor.get_snapped() != start_button and PadCursor.get_snapped() != null,
-			"D-pad left moves the hand to Back")
-	await _tap(JOY_BUTTON_DPAD_RIGHT)
-	_expect(PadCursor.get_snapped() == start_button, "D-pad right returns it to Start")
-	_expect(main.lobby.seats().size() == 1, "walking the hand does not change the seats")
+	_expect(main.lobby.heroes() == ([&"knight"] as Array[StringName]),
+			"a new seat starts on the knight")
+	var preview: HeroPreview = main.lobby._seat_cards[0]["preview"]
+	_expect(preview.visible and preview.hero_id == &"knight"
+			and HeroPreview.PASTIMES.has(preview.current_clip()),
+			"its card shows the knight in 3D, passing the time")
+	await _tap(JOY_BUTTON_DPAD_DOWN)
+	_expect(main.lobby.heroes()[0] == &"barbarian", "D-pad down steps to the next hero")
+	_axis(JOY_AXIS_LEFT_Y, 1.0)
+	await _wait(0.1)
+	_axis(JOY_AXIS_LEFT_Y, 0.0)
+	await _wait(0.1)
+	_expect(main.lobby.heroes()[0] == &"thief", "and so does the left stick, one step per push")
+	_expect(preview.hero_id == &"thief", "the card's model changes with it")
+	await _tap(JOY_BUTTON_DPAD_UP)
+	await _tap(JOY_BUTTON_DPAD_UP)
+	await _tap(JOY_BUTTON_DPAD_UP)
+	_expect(main.lobby.heroes()[0] == &"archer", "up steps back, wrapping round past the knight")
+	await _shot("3_lobby_seats")
+	var start_button: PanelButton = main.lobby._seat_start
+	_expect(start_button.disabled, "Start is off until everyone is ready")
+	await _tap(JOY_BUTTON_START)
+	await _wait(0.3)
+	_expect(not main.in_match(), "and the Start button on the pad does nothing yet")
 	await _tap(JOY_BUTTON_A)
-	_expect(await _until(func() -> bool: return main.in_match()), "A on Start begins the match")
+	_expect(main.lobby.is_ready(DEVICE) and not start_button.disabled,
+			"A locks the hero in, and Start comes on")
+	_expect(preview.current_clip() == HeroPreview.CHEER, "the hero cheers")
+	await _tap(JOY_BUTTON_DPAD_DOWN)
+	_expect(main.lobby.heroes()[0] == &"archer", "a locked-in pick does not change")
+	await _tap(JOY_BUTTON_B)
+	_expect(not main.lobby.is_ready(DEVICE) and main.lobby.seats().size() == 1,
+			"B unlocks the pick without giving up the seat")
+	await _tap(JOY_BUTTON_DPAD_DOWN)
+	_expect(main.lobby.heroes()[0] == &"knight", "so it can be changed again")
+	await _tap(JOY_BUTTON_A)
+	await _shot("3b_lobby_ready")
+	await _tap(JOY_BUTTON_START)
+	_expect(await _until(func() -> bool: return main.in_match()),
+			"with everyone ready, Start begins the match")
 	await _wait(2.0)
 
 	var player := PlayerRegistry.body_of(PlayerRegistry.local_pids()[0]) as PlayerCharacter
@@ -116,6 +151,8 @@ func _run() -> void:
 		_expect(false, "the pad's player is in the world")
 		return _finish()
 	_expect(PlayerBindings.devices_of(0) == [DEVICE], "player 1 is bound to the pad alone")
+	_expect(player.archetype.id == &"knight" and player.gear.has(ItemDB.SHIELD),
+			"and plays the hero picked for them")
 	_expect(main.is_in_group(PadCursor.BLOCK_GROUP), "play blocks the pad cursor")
 
 	await _shot("4_match")
@@ -187,9 +224,23 @@ func _run() -> void:
 	await _wait(0.2)
 	_expect(not player.blocking, "letting go lowers it")
 
+	## Holding X charges the attack; letting go when it is full spins.
+	await _wait(0.8)
+	_button(JOY_BUTTON_X, true)
+	await _wait(0.15)
+	_expect(player.charge_level == 0.0, "a moment's hold shows no charge yet")
+	await _wait(1.0)
+	_expect(player.charge_level >= 1.0, "holding X charges a spin attack")
+	_button(JOY_BUTTON_X, false)
+	await _wait(0.1)
+	_expect(player.charge_level == 0.0
+			and player.cooldown_fraction(player.archetype.charged_attack) > 0.0,
+			"letting go of X spins")
+	await _wait(0.8)
+
 	## Select opens this player's gear panel -- and no longer the bug report form.
 	player.add_item(ItemDB.HOOKSHOT)
-	player.add_item(ItemDB.LANTERN)
+	player.add_item(ItemDB.BOOMERANG)
 	await _tap(JOY_BUTTON_BACK)
 	await _wait(0.3)
 	_expect(player.inventory_open, "Select opens the gear panel")
@@ -202,18 +253,18 @@ func _run() -> void:
 	await _wait(0.3)
 	_axis(JOY_AXIS_LEFT_X, 0.0)
 	await _wait(0.1)
-	_expect(panel.selected_item() == ItemDB.LANTERN, "the stick moves along the items")
+	_expect(panel.selected_item() == ItemDB.BOOMERANG, "the stick moves along the items")
 	_expect(player.global_position.distance_to(from_open) < 0.3,
 			"and does not walk the player about while the panel is open")
-	## The hookshot was found first, so it is what is equipped; swap to the lantern.
+	## The hookshot was found first, so it is what is equipped; swap to the boomerang.
 	_expect(player.equipped() == ItemDB.HOOKSHOT, "the first usable found is the one equipped")
 	await _tap(JOY_BUTTON_A)
 	await _wait(0.1)
-	_expect(player.equipped() == ItemDB.LANTERN, "A equips the highlighted usable")
+	_expect(player.equipped() == ItemDB.BOOMERANG, "A equips the highlighted usable")
 	panel.select(ItemDB.BOOTS)
 	await _tap(JOY_BUTTON_A)
 	await _wait(0.1)
-	_expect(player.equipped() == ItemDB.LANTERN and player.hotkeys[0] == ItemDB.SWORD,
+	_expect(player.equipped() == ItemDB.BOOMERANG and player.hotkeys[0] == ItemDB.SWORD,
 			"static equipment cannot be equipped, and the sword keeps its button")
 	_expect(not player.visual.is_acting(), "and uses nothing while the panel is open")
 	await _shot("5b_gear_assigned")
@@ -224,7 +275,7 @@ func _run() -> void:
 
 	## Holding LT and pushing the right stick brings up the gear wheel; letting the stick go
 	## equips the slice it was pointing at.
-	_expect(player.equipped() == ItemDB.LANTERN, "the lantern is equipped going into the wheel")
+	_expect(player.equipped() == ItemDB.BOOMERANG, "the boomerang is equipped going into the wheel")
 	yaw = camera.yaw
 	_axis(JOY_AXIS_TRIGGER_LEFT, 1.0)
 	await _wait(0.2)
@@ -235,10 +286,11 @@ func _run() -> void:
 	var wheel: GearWheel = main.split_screen.huds[0]._wheel
 	_expect(wheel != null and wheel.visible, "the wheel is on screen in that player's pane")
 	_expect(player.wheel_choice == ItemDB.HOOKSHOT, "pushing the stick up points at the top slice")
-	_axis(JOY_AXIS_RIGHT_X, 1.0)
-	_axis(JOY_AXIS_RIGHT_Y, 0.0)
+	## Up and to the right, where the second of six slices sits.
+	_axis(JOY_AXIS_RIGHT_X, 0.87)
+	_axis(JOY_AXIS_RIGHT_Y, -0.5)
 	await _wait(0.2)
-	_expect(player.wheel_choice == ItemDB.LANTERN, "and right points at the slice on the right")
+	_expect(player.wheel_choice == ItemDB.BOOMERANG, "and up-right points at the next slice round")
 	_expect(is_equal_approx(camera.yaw, yaw), "the camera holds still while LT has its stick")
 	from_open = player.global_position
 	_axis(JOY_AXIS_LEFT_X, 1.0)
@@ -313,13 +365,16 @@ func _run() -> void:
 	_expect(main.outcome.visible, "victory shows the outcome screen")
 	_expect(not main.is_in_group(PadCursor.BLOCK_GROUP), "the pad cursor is back for it")
 	await _shot("6_outcome")
+	## The match was started from the lobby's New world, so it is a saved world: the button
+	## carries on in it rather than rolling a new one.
+	_expect(main.outcome._rematch.text == "Keep exploring", "in a saved world it offers to keep exploring")
 	_expect(await _click(main.outcome._rematch, func() -> bool:
-		return main.world != null and main.world != first_world \
+		return main.world == first_world and not main.outcome.visible \
 				and GameState.phase == GameState.Phase.PLAYING),
-			"A on Hunt again starts a new match")
+			"A on Keep exploring goes back to the same world")
 	await _wait(1.0)
 	_expect(PlayerInput.enabled and main.is_in_group(PadCursor.BLOCK_GROUP),
-			"the new match hands the controls back to the players")
+			"the match hands the controls back to the players")
 
 	## Leaving: the menu's Main Menu button.
 	await _tap(JOY_BUTTON_START)

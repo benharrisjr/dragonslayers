@@ -56,6 +56,11 @@ func ignite(at: Vector3, patch_radius: float,
 	global_position = at
 	radius = patch_radius
 	_build_visual()
+	## Fire burns long grass, flowers and leaves where it lands and melts the snow, on every
+	## machine (each runs its own copy).
+	LeafField.burn_all(get_tree(), at, radius)
+	GrassField.burn_all(get_tree(), at, radius)
+	SnowTrails.melt_all(get_tree(), at, radius)
 
 
 func _process(delta: float) -> void:

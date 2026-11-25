@@ -21,8 +21,9 @@ const ACTIONS: Array[String] = [
 	"wheel_left", "wheel_right", "wheel_up", "wheel_down",
 ]
 
-## Physical keys per action. The sword is also the left mouse button and the equipped usable the
-## right one, added separately.
+## Physical keys per action. The weapon is also the left mouse button, added separately. The
+## right mouse button is the camera's alone (drag to turn it; see SplitScreen), so the shield and
+## the equipped usable sit under the left hand, on Q and E, with K and L as the old spares.
 const KEYS: Dictionary = {
 	"left": [KEY_A, KEY_LEFT],
 	"right": [KEY_D, KEY_RIGHT],
@@ -31,15 +32,15 @@ const KEYS: Dictionary = {
 	"jump": [KEY_SPACE],
 	"dash": [KEY_SHIFT],
 	"item_1": [KEY_J],
-	"item_2": [KEY_K],
-	"item_3": [KEY_L],
+	"item_2": [KEY_Q, KEY_K],
+	"item_3": [KEY_E, KEY_L],
 	"inventory": [KEY_I],
 	"wheel": [KEY_R],
 	"target_next": [KEY_TAB],
 	"target_prev": [KEY_BACKSPACE],
 	"interact": [KEY_F],
-	"cam_left": [KEY_Q],
-	"cam_right": [KEY_E],
+	"cam_left": [KEY_Z],
+	"cam_right": [KEY_C],
 }
 
 ## Pad buttons per action, by position (Godot's ids are positional: JOY_BUTTON_A is the bottom
@@ -70,7 +71,7 @@ const PAD_AXES: Dictionary = {
 	"dash": [JOY_AXIS_TRIGGER_RIGHT, 1.0],
 	"wheel": [JOY_AXIS_TRIGGER_LEFT, 1.0],
 	## The camera's stick again, under names no key is bound to, so the gear wheel can tell a
-	## stick pointing from Q and E turning the camera.
+	## stick pointing from Z and C turning the camera.
 	"wheel_left": [JOY_AXIS_RIGHT_X, -1.0],
 	"wheel_right": [JOY_AXIS_RIGHT_X, 1.0],
 	"wheel_up": [JOY_AXIS_RIGHT_Y, -1.0],
@@ -128,6 +129,25 @@ static func reapply() -> void:
 		apply(_assignment)
 
 
+## Hands `device` (a pad id, or KEYBOARD) to `slot` alone -- a player dropping in mid-match --
+## taking it off any seat beyond the ones in play that the automatic assignment gave it.
+static func assign_device(slot: int, device: int) -> void:
+	while _assignment.size() < PlayerRegistry.MAX_LOCAL_SLOTS:
+		_assignment.append([])
+	for other in _assignment.size():
+		(_assignment[other] as Array).erase(device)
+	_assignment[slot] = [device]
+	apply(_assignment)
+
+
+## Whether `device` drives one of the first `slot_count` seats -- someone already playing.
+static func in_play(device: int, slot_count: int) -> bool:
+	for slot in mini(slot_count, _assignment.size()):
+		if (_assignment[slot] as Array).has(device):
+			return true
+	return false
+
+
 static func devices_of(slot: int) -> Array:
 	return _assignment[slot] if slot < _assignment.size() else []
 
@@ -144,7 +164,7 @@ static func slot_of_pad(device: int) -> int:
 ## are on a pad, the key otherwise.
 static func hotkey_label(slot: int, hotkey: int) -> String:
 	if not on_pad(slot):
-		return ["LMB", "K", "RMB"][hotkey]
+		return ["LMB", "Q", "E"][hotkey]
 	## The hotkeys are the left, top and right face buttons; a Nintendo pad prints different
 	## letters on those than an Xbox one.
 	return ["Y", "X", "A"][hotkey] if _nintendo() else ["X", "Y", "B"][hotkey]
@@ -195,10 +215,6 @@ static func _add_keyboard(action: StringName, action_name: String) -> void:
 		var click := InputEventMouseButton.new()
 		click.button_index = MOUSE_BUTTON_LEFT
 		InputMap.action_add_event(action, click)
-	if action_name == "item_3":
-		var right_click := InputEventMouseButton.new()
-		right_click.button_index = MOUSE_BUTTON_RIGHT
-		InputMap.action_add_event(action, right_click)
 
 
 static func _add_pad(action: StringName, action_name: String, device: int) -> void:

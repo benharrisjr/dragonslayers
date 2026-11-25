@@ -213,8 +213,9 @@ func _run() -> void:
 	if town != null and dummy != null:
 		player.global_position = town.ground_spawn(GameState.chunk_rng(4)) + Vector3.UP * 0.5
 		await _settle(0.8)
-	## One hero is enough: they all swing the same sword.
-	for archetype_id in [ArchetypeDB.ORDER[0]]:
+	## Every hero fights differently -- sword, axe, dagger, magic bolt, arrow -- so every one is
+	## tried. The player is set back to the knight afterwards, which the rest of the run expects.
+	for archetype_id in ArchetypeDB.ORDER:
 		var victim := dummy
 		if victim == null:
 			continue
@@ -265,10 +266,35 @@ func _run() -> void:
 			waited += 0.2
 		_check("%s lands its basic attack from %.1f m" % [archetype_id, distance],
 				victim.health < before, "hp %d after %.1fs" % [victim.health, waited])
+		## And the charged attack, at a victim *behind* them: a spin, a flurry and a ring all
+		## reach all the way round, so a dummy at their back is the one that proves it.
+		var charged := player.archetype.charged_attack
+		var behind_distance := 4.0 if charged.shape != AbilityData.Shape.PROJECTILE else 6.0
+		victim.health = victim.max_health
+		victim.is_dead = false
+		victim.global_position = player.global_position - player.facing() * behind_distance
+		victim.velocity = Vector3.ZERO
+		player.targeting.set_target(null)
+		await _settle(0.6)
+		var charged_before := victim.health
+		_check("%s can let loose its charged attack" % archetype_id, player.use_charged_attack())
+		var charge_wait := 0.0
+		while victim.health >= charged_before and charge_wait < 3.0:
+			await _settle(0.2)
+			charge_wait += 0.2
+		_check("%s's %s lands behind it" % [archetype_id, charged.display_name],
+				victim.health < charged_before,
+				"hp %d after %.1fs, %.2f m away" % [victim.health, charge_wait,
+				_flat_distance(victim.global_position, player.global_position)])
 		victim.set_physics_process(true)
 		player.visual.stop_action()
+	player.archetype = ArchetypeDB.get_archetype(&"knight")
 
 	await _check_gear(player, dummy)
+	await _check_river(player)
+	await _check_deep_water(player)
+	await _check_dungeons(player)
+	await _check_drop_in(player)
 
 	# --- chests ---
 	var chest := _nearest_chest(player)
@@ -282,6 +308,15 @@ func _run() -> void:
 
 	# --- right-button free look ---
 	await _check_mouse_look(player)
+
+	# --- only the chunks near the players are drawn ---
+	await _settle(0.2)
+	var drawn := world.drawn_chunk_count()
+	var mountain_chunk := world.chunk_of_biome(&"mountain")
+	_check("only the chunks round the players are drawn", drawn < world.chunks.size(),
+			"%d of %d" % [drawn, world.chunks.size()])
+	_check("the mountain is always drawn", mountain_chunk != null
+			and mountain_chunk.get_node("Terrain").visible)
 
 	# --- the dragon fight ---
 	await _walk_the_ascent(world, player)
@@ -318,7 +353,74 @@ func _run() -> void:
 	_check("falling costs health", fall_damage[0] >= PlayerCharacter.FALL_DAMAGE,
 			"took %d points" % fall_damage[0])
 
+	await _check_saved_world()
 	_finish()
+
+
+## Saving a world and coming back to it: the match is written to a world file, torn down, and
+## built again from that file, the way loading it from the lobby does.
+func _check_saved_world() -> void:
+	var world := main.world as GameWorld
+	var save := SaveManager.new_world(GameState.world_seed)
+	GameState.world = save
+	var pid: int = PlayerRegistry.local_pids()[0]
+	var player := PlayerRegistry.body_of(pid) as PlayerCharacter
+	player.is_dead = false
+	player.add_item(ItemDB.BOOTS)
+	player.add_item(ItemDB.HEART)
+	var gear_before := player.gear.duplicate()
+	var hearts := player.max_health
+	var opened := PackedStringArray()
+	for node in get_tree().get_nodes_in_group("chests"):
+		if (node as TreasureChest).is_open:
+			opened.append(String(node.name))
+	_check("there is an opened chest to remember", not opened.is_empty())
+	GameState.gold = 77
+	var revealed := DungeonEntrance.revealed_names(get_tree())
+	_check("there are dungeon entrances found to remember", revealed.size() >= 3, str(revealed))
+	world.save_progress()
+	var on_disk := SaveManager.load_world(save.id)
+	_check("the world is written to disk", on_disk != null and on_disk.opened_chests == opened
+			and on_disk.gold == 77 and on_disk.characters.has(String(player.archetype.id))
+			and on_disk.revealed_entrances == revealed)
+
+	## Load it: a fresh build from the seed, with the save laid over it.
+	GameState.gold = 0
+	GameState.phase = GameState.Phase.PLAYING
+	main._on_match_started(save.world_seed)
+	await _settle(1.0)
+	var rebuilt := main.world as GameWorld
+	var found_open := 0
+	for node in get_tree().get_nodes_in_group("chests"):
+		if rebuilt.is_ancestor_of(node) and opened.has(String(node.name)) \
+				and (node as TreasureChest).is_open:
+			found_open += 1
+	_check("opened chests are still open after loading", found_open == opened.size(),
+			"%d of %d" % [found_open, opened.size()])
+	var coins := 0
+	for node in get_tree().get_nodes_in_group("pickups"):
+		if (node as Pickup).kind == Pickup.Kind.GOLD and not node.is_queued_for_deletion():
+			coins += 1
+	_check("and nothing spills out of them again", coins == 0, "%d coins lying about" % coins)
+	_check("the party's gold comes back", GameState.gold == 77, str(GameState.gold))
+	var hero := PlayerRegistry.body_of(pid) as PlayerCharacter
+	var same := hero != null and hero.gear.size() == gear_before.size()
+	if same:
+		for id in gear_before:
+			same = same and hero.has_item(id)
+	_check("the hero comes back with their gear", same,
+			"%s vs %s" % [str(hero.gear) if hero != null else "no hero", str(gear_before)])
+	_check("and their heart containers", hero != null and hero.max_health == hearts)
+	_check("starting in town", hero != null
+			and rebuilt.chunk_containing(hero.global_position) == rebuilt.chunk_of_biome(&"town"))
+	_check("and the dragon is back", rebuilt.dragon != null and not rebuilt.dragon.is_dead)
+	_check("the dungeon entrances found stay found", DungeonEntrance.revealed_names(get_tree()) == revealed,
+			"%s vs %s" % [DungeonEntrance.revealed_names(get_tree()), revealed])
+	var desert := DungeonEntrance.for_dungeon(get_tree(), &"desert")
+	_check("and the desert's marked rock stays lifted", desert != null and desert.revealed
+			and not desert._chunk.can_lift(desert._rock_index))
+	SaveManager.delete_world(save.id)
+	GameState.world = null
 
 
 ## The boss fight end to end: waking it, being hit by it, hitting it back, the reset when the
@@ -343,12 +445,34 @@ func _check_gear(player: PlayerCharacter, dummy: Monster) -> void:
 	await _settle(0.3)
 	var dash_from := player.global_position
 	Input.action_press("p0_dash")
-	await _settle(0.1)
+	await _settle(0.05)
+	var early := Vector2(player.velocity.x, player.velocity.z).length()
+	await _settle(0.5)
+	var held := Vector2(player.velocity.x, player.velocity.z).length()
+	_check("with the boots, holding dash winds up to a sprint", player.is_dashing()
+			and held > early + 2.0 and held > PlayerCharacter.DASH_SPEED * 0.9,
+			"%.1f -> %.1f m/s" % [early, held])
+	## Steering: the stick turns it, but not on the spot.
+	var heading := Vector2(player.velocity.x, player.velocity.z).normalized()
+	## Whichever of stick right and stick up points most across the way it is going (the stick
+	## is camera-relative), so the turn asked for is a real one.
+	var screen_right := Basis(Vector3.UP, player.camera_yaw) * Vector3.RIGHT
+	var across := "p0_right" if absf(Vector2(screen_right.x, screen_right.z).dot(heading)) < 0.7 \
+			else "p0_up"
+	Input.action_press(across)
+	await _settle(0.15)
+	var turned := Vector2(player.velocity.x, player.velocity.z).normalized()
+	var angle := absf(heading.angle_to(turned))
+	_check("a dash steers with the stick, turning wide", angle > 0.15 and angle < 1.2,
+			"%.2f rad" % angle)
+	Input.action_release(across)
 	Input.action_release("p0_dash")
+	await _settle(0.1)
+	_check("letting go of dash ends it", not player.is_dashing())
 	await _settle(0.5)
 	var dashed := player.global_position - dash_from
 	dashed.y = 0.0
-	_check("with the boots the player dashes", dashed.length() > 2.0, "%.1f m" % dashed.length())
+	_check("with the boots the player dashes", dashed.length() > 4.0, "%.1f m" % dashed.length())
 
 	# --- hookshot against something that does not move ---
 	player.add_item(ItemDB.HOOKSHOT)
@@ -358,6 +482,9 @@ func _check_gear(player: PlayerCharacter, dummy: Monster) -> void:
 		var stand := _stand_off(player, anchor.global_position, 8.0)
 		_check("there is somewhere to fire the hookshot from", stand != Vector3.INF)
 		if stand != Vector3.INF:
+			## Skeletons nearby are parked out of the way: the aim would lock on to one, and
+			## this is the hook against something that does not move.
+			var parked := _park_monsters_near(stand, 16.0)
 			player.global_position = stand + Vector3.UP * 0.2
 			player.velocity = Vector3.ZERO
 			player.reset_physics_interpolation()
@@ -373,6 +500,7 @@ func _check_gear(player: PlayerCharacter, dummy: Monster) -> void:
 			_check("hitting something static pulls the player to it", gap_after < 3.0,
 					"%.1f m -> %.1f m" % [gap_before, gap_after])
 			_check("the hook comes back in afterwards", player.hook == null)
+			_unpark_monsters(parked)
 
 	# --- hookshot against something that does ---
 	if dummy != null and not dummy.is_dead:
@@ -396,11 +524,13 @@ func _check_gear(player: PlayerCharacter, dummy: Monster) -> void:
 			## monster arrives: once it is in reach it swings, and being shoved by that swing
 			## says nothing about which end of the line did the travelling.
 			var drifted := 0.0
+			var arrived := false
 			while waited < 1.6:
 				await _settle(0.1)
 				waited += 0.1
 				var gap := _flat_distance(player.global_position, dummy.global_position)
-				if gap > 4.0:
+				arrived = arrived or gap <= 4.0
+				if not arrived:
 					drifted = maxf(drifted, _flat_distance(player.global_position, player_before))
 				closest = minf(closest, gap)
 			_check("hitting a monster pulls it to the player", closest < 4.0,
@@ -466,20 +596,26 @@ func _check_gear(player: PlayerCharacter, dummy: Monster) -> void:
 	_check("and cost no health", player.health == alight_health)
 
 	await _check_new_gear(player)
+	await _check_fetch(player)
 
 	# --- death ---
 	await _settle(0.8)
 	player.is_dead = false
 	player.health = player.max_health
 	var loose_before := _loose_items().size()
+	## Everything held but the sword and shield should end up on the ground.
+	var droppable := 0
+	for id in player.gear:
+		if id != ItemDB.SWORD and id != ItemDB.SHIELD:
+			droppable += 1
 	player.take_damage(player.max_health * 2, player.global_position + Vector3(0, 0, -2), 0.0, 0.0)
 	await _settle(0.5)
 	_check("the player can be killed", player.is_dead)
 	_check("a dead player keeps only the sword and shield",
 			player.gear == ([ItemDB.SWORD, ItemDB.SHIELD] as Array[StringName]), str(player.gear))
 	var loose := _loose_items()
-	_check("and everything else is left on the ground", loose.size() == loose_before + 7,
-			"%d items lying about, %d before" % [loose.size(), loose_before])
+	_check("and everything else is left on the ground", loose.size() == loose_before + droppable,
+			"%d items lying about, %d before, %d held" % [loose.size(), loose_before, droppable])
 	## Back on their feet a few seconds later, standing right beside what they dropped.
 	await _settle(5.0)
 	_check("the player gets back up", not player.is_dead)
@@ -543,37 +679,132 @@ func _stand_off(player: PlayerCharacter, target: Vector3, distance: float) -> Ve
 
 ## The summit used to be reachable only by teleporting. This walks it: up the mountain's ramp
 ## from the rim to the dragon's platform, holding one direction and never jumping.
+## Someone picks up a spare controller mid-match: a player is added on it, next to player 1,
+## with a pane of their own and controls that answer to that controller alone.
+func _check_drop_in(player: PlayerCharacter) -> void:
+	var before := PlayerRegistry.local_pids().size()
+	var panes_before: int = main.split_screen.panes.size()
+	## A pad id nobody has; the bindings name devices by id, connected or not.
+	var pad := 7
+	_check("a spare controller is not playing yet",
+			not PlayerBindings.in_play(pad, NetworkManager.local_slot_count))
+	var pid: int = main.drop_in(pad)
+	await _settle(0.5)
+	var joined := PlayerRegistry.body_of(pid) as PlayerCharacter if pid >= 0 else null
+	_check("pressing Start on it adds a player mid-match", joined != null
+			and PlayerRegistry.local_pids().size() == before + 1,
+			"%d -> %d players" % [before, PlayerRegistry.local_pids().size()])
+	_check("the screen splits again for them", main.split_screen.panes.size() == panes_before + 1,
+			"%d -> %d panes" % [panes_before, main.split_screen.panes.size()])
+	if joined == null:
+		return
+	_check("they arrive beside player 1, not back in town",
+			_flat_distance(joined.global_position, player.global_position) < 4.0,
+			"%.1f m away" % _flat_distance(joined.global_position, player.global_position))
+	_check("they are not playing the same hero as anyone already here",
+			joined.archetype.id != player.archetype.id)
+	var slot := PlayerRegistry.slot_of(pid)
+	_check("their controls are that controller's",
+			PlayerBindings.devices_of(slot) == [pad] and PlayerBindings.in_play(pad, NetworkManager.local_slot_count))
+	_check("player 1's controller is still player 1's",
+			not PlayerBindings.devices_of(slot).has(PlayerBindings.devices_of(0)[0]))
+
+
 func _walk_the_ascent(world: GameWorld, player: PlayerCharacter) -> void:
 	var mountain := world.chunk_of_biome(&"mountain")
 	if mountain == null:
 		return
 	var foot := world.ascent_foot()
-	var inward := world.ascent_direction()
 	player.global_position = foot + Vector3.UP * 1.0
 	player.velocity = Vector3.ZERO
 	player.reset_physics_interpolation()
-	## Movement is camera-relative, so point the camera up the ramp and "up" means "climb".
-	main.split_screen.cameras[0].yaw = atan2(-inward.x, -inward.z)
+	## Movement is camera-relative: face the camera north, so "up" is -z and "right" is +x.
+	main.split_screen.cameras[0].yaw = 0.0
 	await _settle(0.6)
 	var start_y := player.global_position.y
 	var summit_y := ChunkMesher.height_to_world(WorldGenerator.summit_level())
 	_check("the ascent starts below the summit", start_y < summit_y - 5.0,
 			"%.1f m against %.1f m" % [start_y, summit_y])
 
-	Input.action_press("p0_up")
+	## The way up zigzags now, so find it over the terrain -- tile to tile, only where a body can
+	## walk -- and steer along it with the stick, the way a player would.
+	var route := _route_to_summit(mountain, foot)
+	_check("there is a walking route up the mountain", not route.is_empty(), "%d tiles" % route.size())
 	var walked := 0.0
-	while walked < 10.0 and player.global_position.y < summit_y - 0.2:
-		await _settle(0.2)
-		walked += 0.2
-	Input.action_release("p0_up")
-	_check("walking up the ramp reaches the summit without a jump",
-			player.global_position.y >= summit_y - 0.2,
-			"climbed %.1f m of %.1f in %.1f s" % [
-				player.global_position.y - start_y, summit_y - start_y, walked])
+	var next := 0
+	var actions := ["p0_up", "p0_down", "p0_left", "p0_right"]
+	while next < route.size() and walked < 90.0:
+		## Up: the walk is over once standing on the platform, wherever on it the dragon sits.
+		if player.is_on_floor() and player.global_position.y >= summit_y - 0.2:
+			break
+		var target: Vector3 = route[next]
+		## Knocked down a terrace on the way (a monster up there): find the way again from where it
+		## landed, as a player would.
+		if player.is_on_floor() and target.y - player.global_position.y > 3.0:
+			route = _route_to_summit(mountain, player.global_position)
+			next = 0
+			if route.is_empty():
+				break
+			continue
+		var delta := Vector2(target.x - player.global_position.x, target.z - player.global_position.z)
+		if delta.length() < 0.7:
+			next += 1
+			continue
+		var wanted := {"p0_right": delta.x > 0.3, "p0_left": delta.x < -0.3,
+				"p0_down": delta.y > 0.3, "p0_up": delta.y < -0.3}
+		for action: String in actions:
+			if wanted[action]:
+				Input.action_press(action)
+			else:
+				Input.action_release(action)
+		await _settle(0.05)
+		walked += 0.05
+	for action: String in actions:
+		Input.action_release(action)
 	await _settle(0.4)
-	_check("the top of the ramp is the dragon's platform", player.is_on_floor()
+	_check("walking the ramps up the terraces reaches the summit without a jump",
+			player.global_position.y >= summit_y - 0.2,
+			"climbed %.1f m of %.1f in %.1f s (%d of %d steps)" % [
+				player.global_position.y - start_y, summit_y - start_y, walked, next, route.size()])
+	_check("the top of the road is the dragon's platform", player.is_on_floor()
 			and absf(player.global_position.y - summit_y) < 0.5,
 			"y = %.2f" % player.global_position.y)
+
+
+## Tile centres from the tile under `from` to the nearest tile of the summit platform, walking
+## only where TerrainData.can_walk allows. Empty if there is no such way.
+func _route_to_summit(mountain: Chunk, from: Vector3) -> Array[Vector3]:
+	var terrain := mountain.terrain
+	var size := terrain.size
+	var local := from - mountain.global_position
+	var start := Vector2i(int(local.x / ChunkMesher.TILE_SIZE), int(local.z / ChunkMesher.TILE_SIZE))
+	var summit := WorldGenerator.summit_level()
+	var came := {start: start}
+	var queue: Array[Vector2i] = [start]
+	var goal := Vector2i(-1, -1)
+	var head := 0
+	while head < queue.size():
+		var at := queue[head]
+		head += 1
+		if terrain.level(at.x, at.y) == summit:
+			goal = at
+			break
+		for side in 4:
+			var to := at + Vector2i(ChunkMesher.NEIGHBOUR_DX[side], ChunkMesher.NEIGHBOUR_DZ[side])
+			if not terrain.in_bounds(to.x, to.y) or came.has(to) or not terrain.can_walk(at.x, at.y, side):
+				continue
+			came[to] = at
+			queue.append(to)
+	var route: Array[Vector3] = []
+	if goal.x < 0:
+		return route
+	var step := goal
+	while step != start:
+		route.push_front(mountain.global_position + mountain._tile_centre(step.x, step.y))
+		step = came[step]
+	## A couple of tiles on into the platform, so the climb ends standing on it.
+	route.append(mountain.global_position + mountain._tile_centre(size / 2, size / 2))
+	return route
 
 
 func _fight_dragon(world: GameWorld, player: PlayerCharacter) -> void:
@@ -585,6 +816,7 @@ func _fight_dragon(world: GameWorld, player: PlayerCharacter) -> void:
 	var centre := dragon.arena_centre
 	## Nothing should be standing on the platform to break line of sight or block a knockback.
 	var clutter := 0
+	var found := ""
 	var mountain := world.chunk_of_biome(&"mountain")
 	if mountain != null:
 		for node in mountain.get_children():
@@ -595,16 +827,55 @@ func _fight_dragon(world: GameWorld, player: PlayerCharacter) -> void:
 				offset.y = 0.0
 				if offset.length() <= WorldGenerator.arena_radius():
 					clutter += 1
+					found += " %s at %s" % [item.name, offset]
 	_check("the boss arena is clear of scenery and monsters", clutter == 0,
-			"%d things on the platform" % clutter)
+			"%d things on the platform:%s" % [clutter, found])
 
+	## The climb before this can leave the tester on the platform long enough to wake it; the
+	## fight is checked from the start, from the foot of the mountain.
+	player.global_position = world.ascent_foot() + Vector3.UP * 1.0
+	player.velocity = Vector3.ZERO
+	player.reset_physics_interpolation()
+	## Long enough for it to see the platform is empty; then, if it woke, back to sleep.
+	await _settle(1.0)
+	if dragon.state != Dragon.State.DORMANT:
+		dragon._target = null
+		dragon._reset_fight()
+	await _settle(0.5)
 	_check("the dragon starts dormant", dragon.state == Dragon.State.DORMANT)
 	_check("the boss health bar is hidden before the fight", not dragon.is_engaged())
 
+	## Between fights it flies. Send it off now, from an empty summit, and watch it go.
+	if not dragon.is_flying():
+		dragon._net_take_off(7)
+	await _settle(4.0)
+	## Off the summit it drops towards the terraces, so it is measured against the ground under
+	## it -- which is where its shadow is.
+	var shadow := dragon.get_node_or_null("FlightShadow") as MeshInstance3D
+	var above := dragon.global_position.y - shadow.global_position.y if shadow != null else 0.0
+	_check("the dragon takes off and flies", dragon.is_flying() and above > 6.0,
+			"%.1f m above the ground" % above)
+	_check("and its shadow follows it over the ground", shadow != null and shadow.visible
+			and Vector2(shadow.global_position.x - dragon.global_position.x,
+					shadow.global_position.z - dragon.global_position.z).length() < 0.5)
+	_check("it cannot be hurt on the wing", _shrugs_off_a_hit(dragon))
+
 	## Step onto the platform. Everything about engagement is measured from the arena centre,
-	## so this is the moment the fight is supposed to start.
+	## so this is the moment the fight is supposed to start -- once the dragon is home.
 	player.is_dead = false
 	player.health = player.max_health
+	player.global_position = centre + Vector3(6.0, 2.0, 0.0)
+	await _settle(1.0)
+	_check("someone on the summit calls it home", dragon.flight_state == Dragon.Flight.HOME
+			or not dragon.is_flying())
+	var homeward := 0.0
+	while dragon.is_flying() and homeward < 90.0:
+		player.global_position = centre + Vector3(6.0, 2.0, 0.0)
+		await _settle(1.0)
+		homeward += 1.0
+	_check("and it lands back on its perch", not dragon.is_flying()
+			and dragon.global_position.distance_to(dragon.perch) < 1.0,
+			"after %.0f s" % homeward)
 	player.global_position = centre + Vector3(6.0, 2.0, 0.0)
 	await _settle(1.2)
 	_check("standing on the platform wakes the dragon",
@@ -804,6 +1075,37 @@ func _off_platform(player: PlayerCharacter, dragon: Dragon) -> bool:
 
 ## Power glove, the shop, the bug net and the fan, played through the real controls where there
 ## is a control to press.
+## The boomerang and the hookshot both bring back loot lying out of reach.
+func _check_fetch(player: PlayerCharacter) -> void:
+	var town := (main.world as GameWorld).chunk_of_biome(&"town")
+	if town == null:
+		return
+	player.add_item(ItemDB.BOOMERANG)
+	player.add_item(ItemDB.HOOKSHOT)
+	for tool in ["boomerang", "hookshot"]:
+		await _settle(0.8)
+		player.visual.stop_action()
+		player.targeting.set_target(null)
+		var spot := _clear_line_position(player, 7.0, true)
+		if spot == Vector3.INF:
+			_check("there is clear ground to throw the %s over" % tool, false)
+			continue
+		var gold_before := player.gold_collected
+		town._net_spawn_pickup(Pickup.Kind.GOLD, 5, spot + Vector3.UP * 0.3)
+		var toward := spot - player.global_position
+		player.rotation.y = atan2(toward.x, toward.z)
+		player.velocity = Vector3.ZERO
+		await _settle(0.2)
+		var thrown := player.throw_boomerang() if tool == "boomerang" else player.fire_hookshot()
+		_check("the %s goes out after the coin" % tool, thrown)
+		var waited := 0.0
+		while waited < 3.0 and player.gold_collected == gold_before:
+			await _settle(0.1)
+			waited += 0.1
+		_check("the %s brings the coin back to the player" % tool,
+				player.gold_collected > gold_before, "after %.1f s" % waited)
+
+
 func _check_new_gear(player: PlayerCharacter) -> void:
 	var world := main.world as GameWorld
 	await _settle(0.6)
@@ -905,7 +1207,7 @@ func _check_new_gear(player: PlayerCharacter) -> void:
 		Input.action_press("p0_dash")
 		await _settle(0.1)
 		Input.action_release("p0_dash")
-		_check("nobody dashes with a rock overhead", player._dash_time <= 0.0)
+		_check("nobody dashes with a rock overhead", not player.is_dashing())
 		await _settle(0.8)
 		Input.action_press("p0_item_3")
 		await _settle(0.1)
@@ -921,7 +1223,45 @@ func _check_new_gear(player: PlayerCharacter) -> void:
 			broke = _count_of("RockShards") > 0
 		_check("and it shatters where it lands", broke and _count_of("ThrownRock") == 0)
 
+	# --- crates: lifted with the interact button, no glove, and thrown open ---
+	var crate_chunk: Chunk = null
+	var crate_index := -1
+	for chunk in world.chunks:
+		for index in chunk._props.size():
+			if not chunk.is_crate(index) or not chunk.can_lift(index):
+				continue
+			var at := (chunk._props[index]["node"] as Node3D).global_position
+			if crate_chunk == null or at.distance_to(player.global_position) \
+					< (crate_chunk._props[crate_index]["node"] as Node3D).global_position.distance_to(player.global_position):
+				crate_chunk = chunk
+				crate_index = index
+	_check("the world has a crate to lift", crate_chunk != null)
+	if crate_chunk != null:
+		var crate := (crate_chunk._props[crate_index]["node"] as Node3D).global_position
+		var parked := _park_monsters_near(crate, 16.0)
+		player.remove_item(ItemDB.GLOVE)
+		player.global_position = crate + Vector3(0.0, 0.4, 1.3)
+		player.rotation.y = atan2(0.0, -1.0)
+		player.velocity = Vector3.ZERO
+		player.reset_physics_interpolation()
+		await _settle(0.8)
+		player.visual.stop_action()
+		player.lift_crate()
+		await _settle(0.3)
+		_check("a crate is lifted without the glove", player.carried != null
+				and player.carried.has_meta("crate"))
+		await _settle(0.8)
+		player.throw_rock()
+		var waited := 0.0
+		while waited < 3.0 and _count_of("ThrownRock") > 0:
+			await _settle(0.1)
+			waited += 0.1
+		_check("and thrown, it breaks", player.carried == null and _count_of("RockShards") > 0)
+		_unpark_monsters(parked)
+
 	# --- fan ---
+	## Nothing nearby to knock the hero about while they wave it.
+	var fan_parked := _park_monsters_near(player.global_position, 16.0)
 	await _settle(0.6)
 	player.visual.stop_action()
 	player.add_item(ItemDB.FAN)
@@ -931,6 +1271,7 @@ func _check_new_gear(player: PlayerCharacter) -> void:
 	Input.action_release("p0_item_3")
 	_check("the usable button waves the fan", _count_of("Gust") > 0
 			and not player.item_ready(ItemDB.FAN))
+	_unpark_monsters(fan_parked)
 	## Back to town for what follows.
 	if town != null:
 		player.global_position = town.ground_spawn(GameState.chunk_rng(31))
@@ -1008,6 +1349,29 @@ func _clear_line_position(player: PlayerCharacter, distance: float,
 	return Vector3.INF
 
 
+## Moves every live monster within `radius` of `at` far away and stops it, returning what is
+## needed to put each back with _unpark_monsters.
+func _park_monsters_near(at: Vector3, radius: float) -> Array:
+	var parked: Array = []
+	for node in get_tree().get_nodes_in_group("monsters"):
+		var monster := node as Monster
+		if monster == null or monster.is_dead or _flat_distance(monster.global_position, at) > radius:
+			continue
+		parked.append([monster, monster.global_position])
+		monster.set_physics_process(false)
+		monster.global_position = at + Vector3(0.0, 400.0, 0.0)
+	return parked
+
+
+func _unpark_monsters(parked: Array) -> void:
+	for entry: Array in parked:
+		var monster := entry[0] as Monster
+		if is_instance_valid(monster):
+			monster.global_position = entry[1]
+			monster.reset_physics_interpolation()
+			monster.set_physics_process(true)
+
+
 ## An undamaged monster, so a class that misses cannot be credited with an earlier class's hit.
 func _fresh_monster() -> Monster:
 	for node in get_tree().get_nodes_in_group("monsters"):
@@ -1043,3 +1407,356 @@ func _nearest_chest(player: PlayerCharacter) -> TreasureChest:
 			best_distance = distance
 			best = chest
 	return best
+
+
+func _shrugs_off_a_hit(dragon: Dragon) -> bool:
+	var before := dragon.health
+	dragon.take_damage(1, dragon.global_position + Vector3.FORWARD, 0.0, 0.0)
+	return dragon.health == before
+
+
+## The lake's deep middle and the sea past its shallows: walking off the drop is a splash, a
+## little damage, and being put back on the shore just short of where you went in -- not back
+## where you started walking.
+func _check_deep_water(player: PlayerCharacter) -> void:
+	var world := main.world as GameWorld
+	main.split_screen.cameras[0].yaw = 0.0
+	## The checks after this one expect the hero where the river check left them.
+	var home := player.global_position
+	var home_safe := player._safe_position
+	for biome: StringName in [&"beach", &"lake"]:
+		var chunk := world.chunk_of_biome(biome)
+		if chunk == null:
+			continue
+		var run := _walk_into_deep(chunk)
+		_check("the %s has deep water to walk into from the shallows" % biome, not run.is_empty())
+		if run.is_empty():
+			continue
+		player.is_dead = false
+		player.health = player.max_health
+		player.respawn_at(run["start"])
+		await _settle(0.8)
+		var before := player.health
+		var went_in := [false]
+		var on_respawn := func() -> void: went_in[0] = true
+		player.respawned.connect(on_respawn)
+		var action: String = run["action"]
+		var walked := 0.0
+		Input.action_press(action)
+		while not went_in[0] and walked < 8.0:
+			await _settle(0.05)
+			walked += 0.05
+		Input.action_release(action)
+		player.respawned.disconnect(on_respawn)
+		var back := _flat_distance(player.global_position, run["last_safe"])
+		_check("walking off the %s's shallows goes into deep water" % biome, went_in[0],
+				"walked %.1f s" % walked)
+		_check("and puts you back on the shore close to where you went in, a little hurt",
+				went_in[0] and back < 3.0 and player.health < before
+				and _flat_distance(player.global_position, run["start"]) > back + 2.0,
+				"%.1f m from the last safe tile, %.1f m from the start, hp %d -> %d" % [back,
+					_flat_distance(player.global_position, run["start"]), before, player.health])
+		await _settle(0.5)
+	player.health = player.max_health
+	player.respawn_at(home - Vector3.UP * 1.5)
+	player._safe_position = home_safe
+	await _settle(0.5)
+
+
+## The dungeons in a real match: every way in opened the way it is meant to be -- the desert's
+## rock lifted with the glove, the fields' tree struck with the sword, the plains' wall blown open
+## with a bomb, the lake's portal reached by swimming and diving with flippers -- and gone
+## through; then, in two of them, the guardian beaten, the big chest opened and its reward taken,
+## and back out beside the door.
+func _check_dungeons(player: PlayerCharacter) -> void:
+	var world := main.world as GameWorld
+	_check("all eight dungeons are built beside the map", world.dungeons.size() == Dungeon.IDS.size())
+	main.split_screen.cameras[0].yaw = 0.0
+	var home := player.global_position
+	player.is_dead = false
+	player.health = player.max_health
+
+	## The desert: lift the marked rock and the stairwell opens.
+	var desert := DungeonEntrance.for_dungeon(get_tree(), &"desert")
+	if desert != null:
+		var rock: Vector3 = (desert._chunk._props[desert._rock_index]["node"] as Node3D).global_position
+		var parked := _park_monsters_near(rock, 18.0)
+		var stand := rock + desert.global_basis.z * 2.6
+		_place(player, stand, rock)
+		await _settle(0.6)
+		player.add_item(ItemDB.GLOVE)
+		player.equip(ItemDB.GLOVE)
+		await _press("p0_item_3")
+		_check("lifting the desert's marked rock opens a stairwell", desert.revealed and player.carried != null,
+				"%.1f m from the rock" % _flat_distance(player.global_position, rock))
+		await _press("p0_item_3")
+		await _settle(1.0)
+		_unpark_monsters(parked)
+		await _through(player, desert, true)
+
+	## The fields: a swing at the great tree.
+	var fields := DungeonEntrance.for_dungeon(get_tree(), &"fields")
+	if fields != null:
+		var parked := _park_monsters_near(fields.global_position, 18.0)
+		_place(player, fields.global_position + fields.global_basis.z * 2.6, fields.global_position)
+		await _settle(0.6)
+		_check("the great tree hides its door", not fields.revealed)
+		await _press("p0_item_1")
+		await _settle(0.8)
+		_check("a swing at the great tree opens the door in its trunk", fields.revealed)
+		_unpark_monsters(parked)
+		await _through(player, fields, false)
+
+	## The plains: a bomb set down by the cracked wall, standing still; and one thrown on the run.
+	var plains := DungeonEntrance.for_dungeon(get_tree(), &"plains")
+	if plains != null:
+		var wall := plains.to_global(Vector3(0, 0, DungeonEntrance.WALL_FACE))
+		var parked := _park_monsters_near(wall, 18.0)
+		player.add_item(ItemDB.BOMB)
+		player.equip(ItemDB.BOMB)
+		_place(player, plains.to_global(Vector3(0, 0, DungeonEntrance.WALL_FACE + 1.6)), wall)
+		await _settle(0.6)
+		var before := player.health
+		await _press("p0_item_3")
+		var bomb := player.bomb
+		_check("standing still, a bomb is set down at your feet", bomb != null
+				and bomb.velocity == Vector3.ZERO
+				and _flat_distance(bomb.global_position, player.global_position) < 1.5)
+		await _settle(0.4)
+		_check("the wall holds until the bomb goes off", not plains.revealed)
+		await _settle(Bomb.FUSE)
+		_check("the bomb blows open the cracked wall", plains.revealed)
+		_check("and catches whoever set it down", player.health < before, "%d -> %d" % [before, player.health])
+		## On the move, it flies.
+		player.health = player.max_health
+		await _settle(0.6)
+		Input.action_press("p0_down")
+		await _settle(0.35)
+		await _press("p0_item_3")
+		Input.action_release("p0_down")
+		var thrown := player.bomb
+		var from := player.global_position
+		await _settle(0.9)
+		## Well past the 1.5 m a set-down bomb lands within. Not much further: on some seeds the
+		## throw lands on top of a cliff just ahead, which cuts its flight short.
+		_check("on the move, a bomb is thrown", thrown != null and is_instance_valid(thrown)
+				and _flat_distance(thrown.global_position, from) > 2.5,
+				"%.1f m" % (_flat_distance(thrown.global_position, from) if is_instance_valid(thrown) else -1.0))
+		await _settle(Bomb.FUSE)
+		_unpark_monsters(parked)
+		player.health = player.max_health
+		await _through(player, plains, false)
+
+	## The lake: swim out over the portal and dive to it.
+	var lake := DungeonEntrance.for_dungeon(get_tree(), &"lake")
+	if lake != null:
+		player.add_item(ItemDB.FLIPPERS)
+		var surface := lake._chunk.terrain.still_surface
+		var above := lake.global_position
+		above.y = surface - 0.2
+		player.global_position = above
+		player.velocity = Vector3.ZERO
+		player.reset_physics_interpolation()
+		await _settle(0.8)
+		_check("with flippers, deep water is for swimming", player.is_swimming()
+				and absf(player.global_position.y - (surface - PlayerCharacter.SWIM_DEPTH)) < 0.3,
+				"y %.2f, surface %.2f" % [player.global_position.y, surface])
+		var went := [false]
+		var on_respawn := func() -> void: went[0] = true
+		player.respawned.connect(on_respawn)
+		await _press("p0_jump")
+		var waited := 0.0
+		while not went[0] and waited < 2.5:
+			await _settle(0.05)
+			waited += 0.05
+		player.respawned.disconnect(on_respawn)
+		var inside := Dungeon.containing(get_tree(), player.global_position)
+		_check("diving to the lake's portal takes you into its dungeon",
+				inside != null and inside.dungeon_id == &"lake", "after %.1f s" % waited)
+		if inside != null:
+			await _clear(player, inside, lake)
+
+	## The ones that stand open.
+	for id: StringName in [&"well", &"forest", &"temple_low", &"temple_high"]:
+		var entrance := DungeonEntrance.for_dungeon(get_tree(), id)
+		if entrance != null:
+			await _through(player, entrance, id == &"well")
+
+	player.health = player.max_health
+	player.respawn_at(home - Vector3.UP * 1.5)
+	await _settle(0.5)
+
+
+## Stands `player` at `at`, facing `target`.
+func _place(player: PlayerCharacter, at: Vector3, target: Vector3) -> void:
+	player.global_position = at + Vector3.UP * 0.3
+	player.velocity = Vector3.ZERO
+	player.reset_physics_interpolation()
+	var toward := target - at
+	player.rotation.y = atan2(toward.x, toward.z)
+
+
+func _press(action: String) -> void:
+	Input.action_press(action)
+	await _settle(0.1)
+	Input.action_release(action)
+	await _settle(0.1)
+
+
+## In through `entrance` with the interact button and out again -- clearing the dungeon on the
+## way if `clear` is set.
+func _through(player: PlayerCharacter, entrance: DungeonEntrance, clear: bool) -> void:
+	var id := entrance.dungeon_id
+	_place(player, entrance.exit_position().lerp(entrance.door_position(), 0.6),
+			entrance.door_position())
+	await _settle(0.5)
+	await _press("p0_interact")
+	await _settle(0.4)
+	var inside := Dungeon.containing(get_tree(), player.global_position)
+	_check("%s: through the door and into its dungeon" % id, inside != null and inside.dungeon_id == id,
+			"%.1f m from the door" % player.global_position.distance_to(entrance.door_position()))
+	if inside == null:
+		return
+	_check("%s: down there it is dark, not daylight" % id,
+			main.split_screen.cameras[0].camera.environment != null)
+	if clear:
+		await _clear(player, inside, entrance)
+	else:
+		await _leave(player, inside, entrance)
+
+
+## The guardian, the big chest and the way out.
+func _clear(player: PlayerCharacter, dungeon: Dungeon, entrance: DungeonEntrance) -> void:
+	var id := dungeon.dungeon_id
+	var parked := _park_monsters_near(dungeon.entry_position(), 300.0)
+	var chest := dungeon.big_chest
+	## From the side: the reward lands in front of it, and would be picked up on landing.
+	_place(player, chest.global_position + chest.global_basis.x * 2.6, chest.global_position)
+	await _settle(0.5)
+	await _press("p0_interact")
+	_check("%s: the big chest is locked while its guardian stands" % id, chest.locked and not chest.is_open)
+	var boss := dungeon.boss
+	boss.take_damage(boss.max_health * 3, boss.global_position + Vector3.FORWARD, 0.0, 0.0)
+	await _settle(0.4)
+	_check("%s: beating the guardian unlocks it" % id, not chest.locked)
+	await _press("p0_interact")
+	await _settle(0.6)
+	_check("%s: the big chest opens" % id, chest.is_open)
+	var reward := dungeon.reward_item
+	var lying: Pickup = null
+	for node in get_tree().get_nodes_in_group("pickups"):
+		var pickup := node as Pickup
+		if pickup != null and pickup.item_id() == reward and dungeon.is_ancestor_of(pickup):
+			lying = pickup
+	_check("%s: with %s inside" % [id, reward], lying != null)
+	if lying != null:
+		player.remove_item(reward)
+		## Hearts and armour are used up on the spot rather than held.
+		var hearts := player.max_health
+		var armour := player.armor_level
+		_place(player, lying.global_position, lying.global_position + Vector3.FORWARD)
+		await _settle(1.2)
+		_check("%s: and it can be picked up" % id, player.has_item(reward)
+				or player.max_health > hearts or player.armor_level > armour)
+	_unpark_monsters(parked)
+	await _leave(player, dungeon, entrance)
+
+
+func _leave(player: PlayerCharacter, dungeon: Dungeon, entrance: DungeonEntrance) -> void:
+	var door := dungeon.exit_door()
+	_place(player, door.door_position(), door.global_position)
+	await _settle(1.1)
+	await _press("p0_interact")
+	await _settle(0.4)
+	_check("%s: out through the door and back beside the way in" % dungeon.dungeon_id,
+			Dungeon.containing(get_tree(), player.global_position) == null
+			and _flat_distance(player.global_position, entrance.exit_position()) < 2.5,
+			"%.1f m from it" % _flat_distance(player.global_position, entrance.exit_position()))
+
+
+## A straight walk into a chunk's deep water: {"start" (world, a run-up on dry footing), "action"
+## (the direction to hold, with the camera facing north), "last_safe" (the last tile on the way
+## that counts as safe footing)}. Empty if no clear run is found.
+func _walk_into_deep(chunk: Chunk) -> Dictionary:
+	for run_up in [8, 6, 5]:
+		var run := _walk_into_deep_from(chunk, run_up)
+		if not run.is_empty():
+			return run
+	return {}
+
+
+func _walk_into_deep_from(chunk: Chunk, run_up: int) -> Dictionary:
+	var terrain := chunk.terrain
+	var size := terrain.size
+	var actions := ["p0_left", "p0_up", "p0_right", "p0_down"]
+	for z in size:
+		for x in size:
+			if not terrain.is_deep(x, z):
+				continue
+			for side in 4:
+				var dx := ChunkMesher.NEIGHBOUR_DX[side]
+				var dz := ChunkMesher.NEIGHBOUR_DZ[side]
+				var clear := true
+				for k in range(1, run_up + 1):
+					var tx := x + dx * k
+					var tz := z + dz * k
+					if not terrain.in_bounds(tx, tz) or terrain.is_hazard(tx, tz) \
+							or chunk._occupied.has(Vector2i(tx, tz)) \
+							or terrain.rim(tx, tz) < WorldGenerator.BORDER \
+							or (k > 1 and not terrain.can_walk(tx, tz, (side + 2) % 4)):
+						clear = false
+						break
+				if not clear:
+					continue
+				var last_safe := Vector3.INF
+				for k in range(1, run_up + 1):
+					var at := chunk.global_position + chunk.tile_surface(x + dx * k, z + dz * k)
+					if Chunk.is_safe_footing(get_tree(), at):
+						last_safe = at
+						break
+				var start := chunk.global_position + chunk.tile_surface(x + dx * run_up, z + dz * run_up)
+				## Far enough back that being put on the shore is not being put back at the start.
+				if last_safe == Vector3.INF or _flat_distance(last_safe, start) < 5.0:
+					continue
+				## Walking towards the water is the opposite of `side`: +x is right, +z is down.
+				return {
+					"start": start,
+					"action": actions[side],
+					"last_safe": last_safe,
+				}
+	return {}
+
+
+## The river, in the real world: a raft rides it and drifts downstream; without one it sweeps you
+## back to the bank.
+func _check_river(player: PlayerCharacter) -> void:
+	var world := main.world as GameWorld
+	var spot := world.river_landmark("river")
+	_check("the world has a river", spot != Vector3.INF)
+	if spot == Vector3.INF:
+		return
+	var bank := world.river_landmark("bridge")
+	_check("and a bridge over it", bank != Vector3.INF)
+	player.is_dead = false
+	player.health = player.max_health
+	## Somewhere safe to be swept back to: on the bridge's bank.
+	player.respawn_at(bank)
+	await _settle(1.0)
+	player.add_item(ItemDB.RAFT)
+	player.respawn_at(spot + Vector3.UP * 0.2)
+	await _settle(0.6)
+	var start := player.global_position
+	_check("a raft rides on the river", player.is_rafting(),
+			"%.2f m above the bank" % (player.global_position.y - spot.y))
+	await _settle(2.0)
+	var drift := Vector2(player.global_position.x - start.x, player.global_position.z - start.z)
+	_check("and the current carries it downstream", drift.length() > 1.5 or not player.is_rafting(),
+			"%.1f m in 2 s" % drift.length())
+	var before := player.health
+	player.remove_item(ItemDB.RAFT)
+	player.respawn_at(spot + Vector3.UP * 0.2)
+	await _settle(1.5)
+	_check("without a raft the river sweeps you back to the bank",
+			player.global_position.distance_to(spot) > 2.0 and player.health < before,
+			"%.1f m from the water, hp %d -> %d" % [player.global_position.distance_to(spot), before,
+					player.health])

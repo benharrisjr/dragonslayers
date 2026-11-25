@@ -8,7 +8,11 @@ const CREDITS: Array[Dictionary] = [
 	{"section": "Art", "entries": [
 		"Characters, skeletons, weapons and props by Kay Lousberg (kaylousberg.com)",
 		"Environment kits by Kenney (kenney.nl)",
+		"Dragon by MattBas (dragon.best/3d) -- License: CC BY-SA 4.0",
 		"Input prompts and cursors by Kenney (kenney.nl)",
+		"Water after binbun's Water with Caustics shader (godotshaders.com) -- License: CC0",
+		"Comic shading after the Comic Cell shader (godotshaders.com) -- License: CC0",
+		"Grass after Toadile's Grass with Screen-Space Displacement shader (godotshaders.com) -- License: MIT",
 	]},
 	{"section": "Music", "entries": []},
 	{"section": "Sound Effects", "entries": [

@@ -33,6 +33,79 @@ func _draw() -> void:
 		return
 	var main := ItemDB.color(item_id)
 	match item_id:
+		ItemDB.BOMB:
+			## A round black bomb with a cap and a lit fuse.
+			_shape(_circle(Vector2(0.46, 0.6), 0.32), Color(0.16, 0.16, 0.2))
+			_shape([Vector2(0.52, 0.22), Vector2(0.68, 0.24), Vector2(0.66, 0.36), Vector2(0.5, 0.34)],
+					Color(0.6, 0.56, 0.5))
+			_shape([Vector2(0.62, 0.22), Vector2(0.74, 0.08), Vector2(0.78, 0.11), Vector2(0.66, 0.25)],
+					Color(0.85, 0.75, 0.55), false)
+			_shape(_circle(Vector2(0.78, 0.09), 0.07), main, false)
+			_shape(_circle(Vector2(0.36, 0.5), 0.07), Color(0.45, 0.45, 0.55), false)
+		ItemDB.FLIPPERS:
+			## Two flippers side by side, toes up: a heel strap and a broad, notched paddle.
+			for left in [0.1, 0.52]:
+				_shape([Vector2(left + 0.08, 0.92), Vector2(left + 0.3, 0.92), Vector2(left + 0.36, 0.3),
+						Vector2(left + 0.38, 0.08), Vector2(left + 0.19, 0.16), Vector2(left, 0.08),
+						Vector2(left + 0.02, 0.3)], main)
+				_shape([Vector2(left + 0.08, 0.7), Vector2(left + 0.3, 0.7), Vector2(left + 0.3, 0.8),
+						Vector2(left + 0.08, 0.8)], main.darkened(0.4), false)
+		ItemDB.RAFT:
+			## Four logs side by side, lashed with two cords.
+			for index in 4:
+				var left := 0.14 + index * 0.18
+				_shape([Vector2(left, 0.12), Vector2(left + 0.16, 0.12), Vector2(left + 0.16, 0.88),
+						Vector2(left, 0.88)], main if index % 2 == 0 else main.darkened(0.15))
+			for cord in [0.28, 0.72]:
+				_shape([Vector2(0.1, cord - 0.03), Vector2(0.9, cord - 0.03), Vector2(0.9, cord + 0.03),
+						Vector2(0.1, cord + 0.03)], Color(0.85, 0.78, 0.55), false)
+		ItemDB.ARMOR:
+			## A breastplate with shoulder guards.
+			_shape([Vector2(0.22, 0.2), Vector2(0.78, 0.2), Vector2(0.72, 0.6), Vector2(0.62, 0.88),
+					Vector2(0.38, 0.88), Vector2(0.28, 0.6)], main)
+			_shape([Vector2(0.08, 0.18), Vector2(0.3, 0.12), Vector2(0.32, 0.34), Vector2(0.12, 0.4)],
+					Color(0.78, 0.8, 0.86))
+			_shape([Vector2(0.92, 0.18), Vector2(0.7, 0.12), Vector2(0.68, 0.34), Vector2(0.88, 0.4)],
+					Color(0.78, 0.8, 0.86))
+			_shape([Vector2(0.47, 0.26), Vector2(0.53, 0.26), Vector2(0.53, 0.8), Vector2(0.47, 0.8)],
+					main.lightened(0.35), false)
+		ItemDB.BOOMERANG:
+			## A bent stick, the elbow at the top left.
+			_shape([Vector2(0.14, 0.2), Vector2(0.3, 0.1), Vector2(0.9, 0.62), Vector2(0.8, 0.74),
+					Vector2(0.32, 0.36)], main)
+			_shape([Vector2(0.14, 0.2), Vector2(0.32, 0.36), Vector2(0.3, 0.9), Vector2(0.16, 0.86)],
+					main.darkened(0.15))
+		ItemDB.AXE:
+			## Long haft corner to corner, a broad blade at the top.
+			_shape([Vector2(0.14, 0.92), Vector2(0.08, 0.86), Vector2(0.66, 0.28), Vector2(0.72, 0.34)],
+					Color(0.5, 0.33, 0.2))
+			_shape([Vector2(0.5, 0.2), Vector2(0.66, 0.04), Vector2(0.96, 0.34), Vector2(0.8, 0.5),
+					Vector2(0.7, 0.4), Vector2(0.6, 0.3)], main)
+		ItemDB.DAGGER:
+			_shape([Vector2(0.84, 0.1), Vector2(0.9, 0.16), Vector2(0.5, 0.6), Vector2(0.4, 0.5)], main)
+			_shape([Vector2(0.3, 0.5), Vector2(0.38, 0.44), Vector2(0.56, 0.62), Vector2(0.5, 0.7)],
+					Color(0.85, 0.7, 0.3))
+			_shape([Vector2(0.36, 0.6), Vector2(0.42, 0.66), Vector2(0.22, 0.86), Vector2(0.16, 0.8)],
+					Color(0.35, 0.25, 0.2))
+		ItemDB.STAFF:
+			_shape([Vector2(0.12, 0.94), Vector2(0.06, 0.88), Vector2(0.62, 0.32), Vector2(0.68, 0.38)],
+					Color(0.5, 0.36, 0.24))
+			_shape([Vector2(0.78, 0.06), Vector2(0.94, 0.22), Vector2(0.78, 0.38), Vector2(0.62, 0.22)],
+					main)
+			_shape([Vector2(0.78, 0.14), Vector2(0.86, 0.22), Vector2(0.78, 0.3), Vector2(0.7, 0.22)],
+					Color(0.92, 0.9, 1.0), false)
+		ItemDB.BOW:
+			## The limb as a fat crescent, the string as a thin bar across it.
+			var limb: Array = []
+			for step in 9:
+				var angle := lerpf(-1.25, 1.25, step / 8.0)
+				limb.append(Vector2(0.18, 0.5) + Vector2(cos(angle), sin(angle)) * 0.44)
+			for step in 9:
+				var angle := lerpf(1.25, -1.25, step / 8.0)
+				limb.append(Vector2(0.18, 0.5) + Vector2(cos(angle), sin(angle)) * 0.34)
+			_shape(limb, main)
+			_shape([Vector2(0.3, 0.08), Vector2(0.34, 0.08), Vector2(0.34, 0.92), Vector2(0.3, 0.92)],
+					Color(0.92, 0.9, 0.82), false)
 		ItemDB.SWORD:
 			_shape([Vector2(0.78, 0.08), Vector2(0.9, 0.2), Vector2(0.42, 0.68), Vector2(0.3, 0.56)], main)
 			_shape([Vector2(0.2, 0.5), Vector2(0.3, 0.42), Vector2(0.56, 0.7), Vector2(0.48, 0.8)],
@@ -115,6 +188,15 @@ func _draw() -> void:
 					Vector2(0.26, 0.3), Vector2(0.34, 0.18)], main, false)
 			_shape([Vector2(0.36, 0.3), Vector2(0.48, 0.2), Vector2(0.52, 0.24), Vector2(0.4, 0.34)],
 					Color.WHITE, false)
+
+
+## Points round a circle, in 0..1 icon space.
+static func _circle(centre: Vector2, radius: float, sides: int = 14) -> Array:
+	var points := []
+	for index in sides:
+		var angle := TAU * index / sides
+		points.append(centre + Vector2(cos(angle), sin(angle)) * radius)
+	return points
 
 
 ## One filled polygon in 0..1 icon space, with a dark outline unless it is a detail on top.

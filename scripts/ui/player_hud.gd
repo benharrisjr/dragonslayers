@@ -21,6 +21,7 @@ var _inventory: InventoryPanel
 var _name_label: Label
 var _gold_label: Label
 var _bug_label: Label
+var _armor_label: Label
 var _shop: ShopPanel
 var _wheel: GearWheel
 var _target_label: Label
@@ -67,6 +68,10 @@ func _build() -> void:
 
 	_hearts = HeartsDisplay.new()
 	root.add_child(_hearts)
+
+	## Armour, under the hearts it protects, in the colour it dyes the clothes.
+	_armor_label = _make_label("", 13, Color.WHITE)
+	root.add_child(_armor_label)
 
 	_build_equipped()
 
@@ -176,6 +181,15 @@ func _refresh_gear() -> void:
 		if ItemDB.is_passive(item):
 			passive.append(ItemDB.display_name(item))
 	_passive_label.text = "  ".join(passive)
+	match player.armor_level:
+		1:
+			_armor_label.text = "Armor I  ·  half damage"
+			_armor_label.add_theme_color_override("font_color", Color(0.45, 0.65, 1.0))
+		2:
+			_armor_label.text = "Armor II  ·  quarter damage"
+			_armor_label.add_theme_color_override("font_color", Color(1.0, 0.42, 0.38))
+		_:
+			_armor_label.text = ""
 	## Hidden until there is something to count, so it is not clutter before the first catch.
 	_bug_label.text = "%d bug%s" % [player.bugs, "" if player.bugs == 1 else "s"] \
 			if player.bugs > 0 or player.has_item(ItemDB.NET) else ""

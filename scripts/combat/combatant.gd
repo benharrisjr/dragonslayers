@@ -27,6 +27,12 @@ const LAYER_SCENERY := 4
 ## Players, monsters and the dragon. Separated from the world layer so that standing on another
 ## character cannot make it a moving platform -- see setup_body().
 const LAYER_COMBATANT := 2
+## The river's surface, as something to stand on. Only a player carrying a raft collides with it;
+## for everyone else the river is deep water.
+const LAYER_WATER := 8
+## The invisible walls along a ledged cliff top (ChunkMesher.ledge_shape): they stop bodies
+## walking, jumping or being knocked off, but nothing thrown, fired or looked through.
+const LAYER_LEDGE := 16
 
 ## Nothing in this game legitimately travels faster than this. The hardest knockback in the game
 ## is the dragon's tail sweep at 34 m/s, so anything past 120 is a bug, and an unclamped bug of
@@ -37,10 +43,9 @@ const MAX_SPEED := 120.0
 ## still reads as a pit rather than as an instant respawn.
 const KILL_HEIGHT := -25.0
 
-## Health is counted in heart *points*: three hearts of four points each. Storing points
-## rather than hearts is what lets the HUD draw honest quarter-hearts and lets a chip-damage
-## attack exist at all.
-const POINTS_PER_HEART := 4
+## Health is a whole number of points, two to a heart: a hero's six points are three hearts,
+## and one hit (one point) is half a heart. Skeletons have two.
+const POINTS_PER_HEART := 2
 
 ## Which side this body is on. A property rather than a plain field because the group it belongs
 ## to has to follow it: bodies are built by add_child()ing them and *then* configuring them, so
@@ -92,12 +97,12 @@ static func setup_body(body: CharacterBody3D, radius: float, height: float) -> v
 	shape.shape = capsule
 	shape.position.y = height * 0.5
 	body.add_child(shape)
-	## Capsules rather than boxes: characters step up 0.9 m plateaus constantly, and a box
+	## Capsules rather than boxes: characters step up 1.5 m plateaus constantly, and a box
 	## catches on every one of them.
 	body.floor_max_angle = deg_to_rad(50.0)
 	body.floor_snap_length = 0.6
 	body.collision_layer = LAYER_COMBATANT
-	body.collision_mask = LAYER_WORLD | LAYER_COMBATANT | LAYER_SCENERY
+	body.collision_mask = LAYER_WORLD | LAYER_COMBATANT | LAYER_SCENERY | LAYER_LEDGE
 	## Only the static world may act as ground that carries you. It never moves, so in practice
 	## this disables platform velocity inheritance entirely.
 	body.platform_floor_layers = LAYER_WORLD
@@ -143,10 +148,32 @@ func _sent_by_host() -> bool:
 	return sender == 0 or sender == 1
 
 
-## Unable to act for the moment. Only monsters can be; an ability that was winding up when its
-## caster was stunned does not go off (AbilityRunner).
+## Unable to act for the moment. Monsters and players can be (the dragon cannot); an ability
+## that was winding up when its caster was stunned does not go off (AbilityRunner).
 func is_stunned() -> bool:
 	return false
+
+
+## Host only: stops this body acting for `seconds`. Overridden by those that can be stunned.
+func stun(_seconds: float) -> void:
+	pass
+
+
+## A ring of yellow over the head, on every peer, for as long as a stun lasts.
+func show_stun_ring(seconds: float) -> void:
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.28
+	ring.outer_radius = 0.38
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(1.0, 0.9, 0.25)
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var halo := MeshInstance3D.new()
+	halo.mesh = ring
+	halo.material_override = material
+	halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	halo.position.y = hit_height + 0.35
+	add_child(halo)
+	get_tree().create_timer(seconds).timeout.connect(halo.queue_free)
 
 
 ## The point attacks aim at and measure to: mid-body, not underfoot.
@@ -156,6 +183,17 @@ func hit_centre() -> Vector3:
 
 func is_hostile_to(other: Combatant) -> bool:
 	return other != null and not other.is_dead and other.faction != faction
+
+
+## Whether this body's attacks land on `other`. Everything hostile -- and, for a player, every
+## other player as well: swords, arrows and rocks hurt and shove friends too. Kept apart from
+## is_hostile_to, which is what monsters chase and what auto-aim picks, so a swing still aims at
+## the skeleton rather than the friend beside it.
+func can_hit(other: Combatant) -> bool:
+	if other == null or other == self or other.is_dead:
+		return false
+	return is_hostile_to(other) \
+			or (faction == Faction.PLAYER and other.faction == Faction.PLAYER)
 
 
 ## Host-side entry point for every hit in the game.

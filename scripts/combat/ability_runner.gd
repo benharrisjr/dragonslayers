@@ -26,12 +26,36 @@ static func execute(caster: Combatant, ability: AbilityData, origin: Vector3,
 			var targets := CombatResolver.arc_targets(caster.get_tree(), caster, current_origin,
 					facing, ability)
 			CombatResolver.apply(ability, caster, targets, current_origin)
+			## A swing at a great tree finds the door in it.
+			if caster is PlayerCharacter:
+				var reach := maxf(ability.range, 1.5)
+				DungeonEntrance.struck(caster.get_tree(),
+						current_origin + facing.normalized() * reach * 0.5, reach * 0.6)
 		AbilityData.Shape.PROJECTILE:
-			caster.fire_projectile(ability, current_origin, aim)
+			if ability.projectile_count <= 1:
+				caster.fire_projectile(ability, current_origin, aim)
+			else:
+				## A ring of them, evenly round the caster, the first along the aim.
+				var flat := Vector3(aim.x, 0.0, aim.z)
+				if flat.length_squared() < 0.001:
+					flat = caster.facing()
+				for index in ability.projectile_count:
+					if index > 0 and ability.projectile_interval > 0.0:
+						## One at a time, each along where the spinning caster now faces, and
+						## from where they now stand.
+						await caster.get_tree().create_timer(ability.projectile_interval).timeout
+						if not is_instance_valid(caster) or caster.is_dead or caster.is_stunned():
+							return
+						current_origin = caster.global_position
+					var turn := TAU * index / ability.projectile_count
+					caster.fire_projectile(ability, current_origin,
+							flat.normalized().rotated(Vector3.UP, turn))
 		AbilityData.Shape.NOVA:
 			var caught := CombatResolver.radius_targets(caster.get_tree(), caster,
 					current_origin, ability.radius)
 			CombatResolver.apply(ability, caster, caught, current_origin)
+			if caster is PlayerCharacter:
+				DungeonEntrance.struck(caster.get_tree(), current_origin, ability.radius)
 		AbilityData.Shape.SELF:
 			if ability.heal > 0:
 				for ally in CombatResolver.ally_targets(caster.get_tree(), caster, ability.radius):

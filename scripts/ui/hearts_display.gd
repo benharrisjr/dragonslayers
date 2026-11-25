@@ -1,11 +1,11 @@
 class_name HeartsDisplay
 extends Control
 
-## The health row: N hearts, each worth four points.
+## The health row: N hearts, each worth two points.
 ##
-## Drawn rather than assembled from textures so that a quarter heart is exactly a quarter, and
-## so an upgraded max-hearts count just changes a number instead of needing new art. Points
-## rather than whole hearts is what lets a 1-point chip attack exist at all.
+## Drawn rather than assembled from textures so that a half heart is exactly half, and so an
+## upgraded max-hearts count just changes a number instead of needing new art. An odd number of
+## points is a heart cut down the middle: the last heart empties from the right.
 
 const HEART_SIZE := 22.0
 const HEART_GAP := 4.0
@@ -13,8 +13,8 @@ const EMPTY_COLOR := Color(0.16, 0.13, 0.16, 0.85)
 const FULL_COLOR := Color(0.92, 0.24, 0.34)
 const OUTLINE_COLOR := Color(0.08, 0.06, 0.08, 0.9)
 
-var current: int = 12
-var maximum: int = 12
+var current: int = 6
+var maximum: int = 6
 
 
 func set_health(value: int, max_value: int) -> void:
@@ -40,8 +40,7 @@ func _draw() -> void:
 			_draw_heart(origin, FULL_COLOR, fill)
 
 
-## Fills bottom-up so a heart visibly drains rather than shrinking, which reads better at a
-## glance in the corner of a quarter-screen pane.
+## Fills from the left, so a half heart is its left half and the row drains right to left.
 func _draw_heart(origin: Vector2, color: Color, fill: float) -> void:
 	var size := HEART_SIZE
 	var shape := PackedVector2Array()
@@ -58,11 +57,13 @@ func _draw_heart(origin: Vector2, color: Color, fill: float) -> void:
 		draw_polyline(shape, OUTLINE_COLOR, 1.5)
 		return
 
-	## Clip to the filled fraction by intersecting the heart with a rect from the bottom.
-	var cut_y := origin.y + size * (1.0 - fill)
-	var clipped := PackedVector2Array()
-	for point in shape:
-		clipped.append(Vector2(point.x, maxf(point.y, cut_y)))
+	## Clip to the filled fraction by intersecting the heart with a rect from the left. (Squashing
+	## the outline's points against the cut instead leaves a polygon that will not triangulate,
+	## and draws nothing at all.)
+	var cut_x := origin.x + size * fill
+	var keep := PackedVector2Array([origin + Vector2(-1.0, -1.0), Vector2(cut_x, origin.y - 1.0),
+			Vector2(cut_x, origin.y + size + 1.0), origin + Vector2(-1.0, size + 1.0)])
 	if fill > 0.0:
-		draw_colored_polygon(clipped, color)
+		for piece in Geometry2D.intersect_polygons(shape, keep):
+			draw_colored_polygon(piece, color)
 	draw_polyline(shape, OUTLINE_COLOR, 1.5)

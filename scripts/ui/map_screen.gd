@@ -69,11 +69,15 @@ func _paint() -> void:
 				var color := PIT
 				if level != ChunkMesher.HOLE:
 					## Higher ground is lighter, so the tiers read at a glance.
-					color = chunk.biome.ground_color.lerp(Color.WHITE, 0.4 * level / top) \
+					color = Season.ground_color(chunk.biome.id, chunk.biome.ground_color).lerp(Color.WHITE, 0.4 * level / top) \
 							.darkened(0.25 * (1.0 - level / top))
 					## A drop to the south or east draws a dark edge: the cliffs and mesas.
 					if _drops(chunk, x + 1, z, level) or _drops(chunk, x, z + 1, level):
 						color = color.darkened(0.35)
+					if chunk.terrain.is_bridge(x, z):
+						color = RiverBuilder.WOOD
+					elif chunk.terrain.is_water(x, z):
+						color = Color(0.2, 0.5, 0.85)
 					elif chunk.terrain.slopes[z * tiles + x] != 0:
 						color = color.darkened(0.1)
 					var wet := sea and ChunkMesher.height_to_world(level) < WorldGenerator.SEA_SURFACE
@@ -108,7 +112,7 @@ func _draw() -> void:
 	draw_texture_rect(_texture, rect, false)
 
 	var font := get_theme_default_font()
-	var title := "Map"
+	var title := "Map  ·  %s" % Season.display_name()
 	draw_string_outline(font, rect.position + Vector2(0, -14), title,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 26, 6, Color.BLACK)
 	draw_string(font, rect.position + Vector2(0, -14), title,
@@ -134,7 +138,14 @@ func _draw() -> void:
 		var body := PlayerRegistry.body_of(pid) as PlayerCharacter
 		if body == null or not is_instance_valid(body):
 			continue
-		var at := _to_screen(rect, body.global_position)
+		## Down in a dungeon, they are shown at its way in.
+		var where := body.global_position
+		var dungeon := Dungeon.containing(get_tree(), where)
+		if dungeon != null:
+			var entrance := DungeonEntrance.for_dungeon(get_tree(), dungeon.dungeon_id)
+			if entrance != null:
+				where = entrance.global_position
+		var at := _to_screen(rect, where)
 		## An arrowhead pointing the way the player faces (+Z is "down" on the map).
 		var facing := body.facing()
 		var forward := Vector2(facing.x, facing.z).normalized() * 11.0

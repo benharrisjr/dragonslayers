@@ -90,6 +90,9 @@ func _on_phase_changed(phase: GameState.Phase) -> void:
 	_detail.text = "%d slayer%s  ·  %d gold earned" % [
 		party, "" if party == 1 else "s", GameState.gold]
 	_rematch.visible = NetworkManager.is_host()
+	## A saved world is not thrown away for a new one: play goes on in it (the dragon is back
+	## the next time it is loaded).
+	_rematch.text = "Keep exploring" if GameState.world != null else "Hunt again"
 	_waiting.visible = not NetworkManager.is_host()
 	visible = true
 	SelectionReticle.focus_first.call_deferred(

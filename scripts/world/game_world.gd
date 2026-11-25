@@ -22,13 +22,33 @@ var layout: Array[StringName] = []
 ## Tier of each chunk (WorldGenerator.Tier), row-major like the layout.
 var tiers: PackedInt32Array
 var dragon: Dragon
+## The eight dungeons, beside the map, in Dungeon.IDS order.
+var dungeons: Array[Dungeon] = []
+## The river's plan (WorldGenerator._plan_river): which chunks it runs through, and how.
+var river: Dictionary = {}
+## The time of day, and everything that goes with it.
+var day_night: DayNight
+## The worn paths joining the map's slopes.
+var paths: PathNetwork
 
 var _players_root: Node3D
+## Only the chunks near the players on this machine are drawn, plus the mountain, which is
+## always there on the horizon. True draws everything (the overview capture).
+var draw_all: bool = false
+var _drawn: Dictionary = {}
 
 
 ## Where short-lived world effects (projectiles, fire patches) are parented. The match's root
 ## node joins this group; the fallback keeps scenes run on their own (the tests) working.
 const EFFECTS_GROUP := &"effects_root"
+
+## The GameWorld a node is part of, however deep it sits; null outside one.
+static func of(node: Node) -> GameWorld:
+	var at := node.get_parent()
+	while at != null and not at is GameWorld:
+		at = at.get_parent()
+	return at as GameWorld
+
 
 static func effects_root(tree: SceneTree) -> Node:
 	var found := tree.get_first_node_in_group(EFFECTS_GROUP)
@@ -37,36 +57,172 @@ static func effects_root(tree: SceneTree) -> Node:
 
 func build(world_seed: int) -> void:
 	var plan := WorldGenerator.plan(world_seed)
+	river = plan["river"]
 	layout.assign(plan["biomes"])
 	tiers = plan["tiers"]
+	## Before any chunk is built: the season decides their colours, trees and ground cover.
+	Season.current = Season.roll(world_seed)
 	_build_environment()
 
+	## Every chunk's ground first, then the paths over all of it, then what stands on it.
+	var contexts: Array[Dictionary] = []
+	var generators: Array[RandomNumberGenerator] = []
+	var terrains: Array[TerrainData] = []
+	for index in layout.size():
+		var ctx := WorldGenerator.context(tiers, index, plan["river"], plan["entrances"],
+				plan["shape_seed"])
+		## The whole map's biomes, so the ground's colours can blend across the borders.
+		ctx["layout"] = layout
+		var rng := GameState.chunk_rng(index)
+		ctx["terrain"] = WorldGenerator.heightmap(BiomeLibrary.get_biome(layout[index]), rng, ctx)
+		contexts.append(ctx)
+		generators.append(rng)
+		terrains.append(ctx["terrain"])
+	paths = PathNetwork.lay(terrains, layout, plan["shape_seed"])
+	var torches := paths.torches()
+	var ground := ChunkMesher.make_material()
+	ground.set_shader_parameter("paths", ImageTexture.create_from_image(paths.image()))
 	for index in layout.size():
 		var chunk := Chunk.new()
 		add_child(chunk)
-		chunk.build(index, layout[index], GameState.chunk_rng(index),
-				WorldGenerator.context(tiers, index))
+		contexts[index]["torches"] = torches.get(index, [])
+		chunk.build(index, layout[index], generators[index], contexts[index])
 		chunks.append(chunk)
 
 	_place_dragon()
+	_build_dungeons()
 
 	## Built after the chunks; it stands directly against the outer rims, whatever tier they are.
 	var boundary := WorldBoundary.new()
 	add_child(boundary)
 	boundary.build()
+	day_night.settle()
 
+	_start_season()
 	_prewarm_effects()
 
 	_players_root = Node3D.new()
 	_players_root.name = "Players"
 	add_child(_players_root)
 	_spawn_players()
+	_resume_progress()
 	world_built.emit()
+
+
+## A spot beside one of the river's sights, for --goto and the captures: the first "bridge", the
+## highest "waterfall", the "pond" at its source, a stretch of open "river" (on the water itself)
+## or the "bank" beside one. Upstream first, in the order the river runs. Vector3.INF if there is no river.
+func river_landmark(kind: String) -> Vector3:
+	var cells: Array = river.get("cells", [])
+	var best := Vector3.INF
+	var best_tile := Vector2i.ZERO
+	var best_chunk: Chunk = null
+	for cell: int in cells:
+		var chunk := chunks[cell]
+		## Open river is lowland river: on the mountain it is all ponds and falls between
+		## narrow terraces, with nowhere level to stand and watch it from.
+		if (kind == "river" or kind == "bank") and layout[cell] == &"mountain":
+			continue
+		var terrain := chunk.terrain
+		var size := terrain.size
+		match kind:
+			"bridge":
+				if not terrain.bridges.is_empty():
+					var spec: Dictionary = terrain.bridges[0]
+					var from: Vector2i = spec["from"]
+					return chunk.global_position + Vector3(from.x * 2.0 - 3.0,
+							int(spec["level"]) * ChunkMesher.STEP_HEIGHT, from.y * 2.0 - 3.0)
+			"pond":
+				var pond: Vector2 = (river["parts"][cell] as Dictionary).get("pond", Vector2.INF)
+				if pond != Vector2.INF:
+					return _dry_beside(chunk, Vector2i(pond))
+			_:
+				for z in size:
+					for x in size:
+						if not terrain.is_water(x, z) or terrain.is_bridge(x, z):
+							continue
+						var wanted := terrain.level(x, z) == terrain.base_level - 1
+						if kind == "waterfall":
+							wanted = RiverBuilder.is_below_fall(terrain, x, z)
+						elif kind == "bigfall":
+							## The foot of a fall of five levels or more: a cliff between tiers.
+							wanted = false
+							for side in 4:
+								var above := RiverBuilder.bed_beyond(terrain, x, z, side)
+								wanted = wanted or (not is_nan(above) and above - terrain.level(x, z) >= 5)
+						if not wanted:
+							continue
+						var at := chunk.global_position + Vector3((x + 0.5) * 2.0,
+								(terrain.level(x, z) + 1) * ChunkMesher.STEP_HEIGHT, (z + 0.5) * 2.0)
+						if kind == "river":
+							return at
+						if kind == "bank":
+							return _dry_beside(chunk, Vector2i(x, z))
+						if best == Vector3.INF or at.y > best.y:
+							best = at
+							best_tile = Vector2i(x, z)
+							best_chunk = chunk
+	## Somewhere dry to stand and look at it from, not the water itself.
+	return _dry_beside(best_chunk, best_tile) if best_chunk != null else best
+
+
+## The nearest dry, flat tile to `tile` in `chunk`, on top of it.
+func _dry_beside(chunk: Chunk, tile: Vector2i) -> Vector3:
+	var terrain := chunk.terrain
+	for reach in range(1, 10):
+		for dz in range(-reach, reach + 1):
+			for dx in range(-reach, reach + 1):
+				var x := tile.x + dx
+				var z := tile.y + dz
+				if terrain.in_bounds(x, z) and not terrain.is_water(x, z) \
+						and not terrain.is_hole(x, z) and not terrain.is_slope(x, z):
+					return chunk.global_position + Vector3((x + 0.5) * 2.0,
+							terrain.level(x, z) * ChunkMesher.STEP_HEIGHT, (z + 0.5) * 2.0)
+	return Vector3.INF
+
+
+## Winter's tracks in the snow and summer's grass bending round whoever walks through it are
+## both driven from here, every frame. The ground material is shared between matches, so the
+## snow is switched off as well as on.
+var snow: SnowTrails
+
+
+## The ground's material outlives the match: it must not keep this one's paths.
+func _exit_tree() -> void:
+	ChunkMesher.make_material().set_shader_parameter("paths", null)
+
+
+func _start_season() -> void:
+	var ground := ChunkMesher.make_material()
+	ground.set_shader_parameter("snow", false)
+	if Season.current == Season.Kind.WINTER:
+		snow = SnowTrails.new()
+		add_child(snow)
+		snow.attach(ground)
+
+
+func _process(delta: float) -> void:
+	if not is_inside_tree():
+		return
+	_tick_autosave(delta)
+	_update_drawn_chunks()
+	match Season.current:
+		Season.Kind.SUMMER:
+			GrassField.apply_pushers(GrassField.material(), GrassField.collect_pushers(get_tree()))
+		Season.Kind.FALL:
+			LeafField.apply_pushers(GrassField.collect_pushers(get_tree()))
+
+
+func _physics_process(_delta: float) -> void:
+	if Season.current == Season.Kind.FALL and is_inside_tree():
+		LeafField.kick_from_bodies(get_tree())
 
 
 ## Called before this world is freed. queue_free() is deferred, so without this the registry
 ## still reports the old bodies as valid while the new world is deciding what to spawn.
 func teardown() -> void:
+	if SaveManager.world_flush == save_progress:
+		SaveManager.world_flush = Callable()
 	if PlayerRegistry.roster_changed.is_connected(reconcile_players):
 		PlayerRegistry.roster_changed.disconnect(reconcile_players)
 	for pid in PlayerRegistry.all_pids():
@@ -74,14 +230,141 @@ func teardown() -> void:
 	PlayerRegistry.bodies.clear()
 
 
-## World position of the bottom of the mountain's ascent ramp, on the rim walkway.
+# --- saved worlds -------------------------------------------------------------------------
+
+## Seconds between autosaves of a saved world.
+const AUTOSAVE_EVERY := 120.0
+var _autosave_left: float = AUTOSAVE_EVERY
+## Saved kits that arrived for a player whose body this machine has not built yet (the roster
+## and the world can reach a client in either order); applied when the body is spawned.
+var _pending_restore: Dictionary = {}
+
+
+## The chunk whose square of the map `point` lies in, or null off the map.
+func chunk_containing(point: Vector3) -> Chunk:
+	var cell := Vector2i((Vector2(point.x, point.z) / WorldGenerator.CHUNK_SIZE).floor())
+	if cell.x < 0 or cell.y < 0 or cell.x >= WorldGenerator.GRID or cell.y >= WorldGenerator.GRID:
+		return null
+	var index := cell.y * WorldGenerator.GRID + cell.x
+	return chunks[index] if index < chunks.size() else null
+
+
+## Picks up where the world left off. The host lays its save (if this is a saved world) over the
+## fresh build; a client asks the host what has changed so far -- which is also how someone
+## joining mid-match sees the chests already opened, the party's gold and everyone's kit.
+func _resume_progress() -> void:
+	if NetworkManager.is_host():
+		if GameState.world != null:
+			WorldPersistence.apply_world(self, GameState.world)
+			SaveManager.world_flush = save_progress
+	else:
+		_request_catch_up.rpc_id(1)
+
+
+## Host: writes the match into its save and the save to disk. A no-op in an unsaved match.
+func save_progress() -> void:
+	if not NetworkManager.is_host() or GameState.world == null or not is_inside_tree():
+		return
+	WorldPersistence.capture(self, GameState.world)
+	SaveManager.save_world(GameState.world)
+	_autosave_left = AUTOSAVE_EVERY
+
+
+func _tick_autosave(delta: float) -> void:
+	if GameState.world == null or not NetworkManager.is_host() \
+			or GameState.phase != GameState.Phase.PLAYING or get_tree().paused:
+		return
+	GameState.world.play_time_seconds += delta
+	_autosave_left -= delta
+	if _autosave_left <= 0.0:
+		save_progress()
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_catch_up() -> void:
+	if not NetworkManager.is_host():
+		return
+	var peer := multiplayer.get_remote_sender_id()
+	var opened := PackedStringArray()
+	for node in get_tree().get_nodes_in_group("chests"):
+		var chest := node as TreasureChest
+		if chest != null and chest.is_open:
+			opened.append(String(chest.name))
+	_net_catch_up.rpc_id(peer, opened, GameState.gold, DungeonEntrance.revealed_names(get_tree()),
+			unlocked_chests(), day_night.time)
+	for pid: int in PlayerRegistry.bodies:
+		var body := PlayerRegistry.body_of(pid) as PlayerCharacter
+		if body != null:
+			_net_restore_player.rpc_id(peer, pid, body.save_state())
+
+
+@rpc("authority", "call_remote", "reliable")
+func _net_catch_up(opened: PackedStringArray, gold: int, revealed: PackedStringArray = [],
+		unlocked: PackedStringArray = [], time_of_day: float = DayNight.MORNING) -> void:
+	day_night.time = time_of_day
+	WorldPersistence.open_chests(get_tree(), opened)
+	GameState.gold = gold
+	DungeonEntrance.reveal_named(get_tree(), revealed)
+	WorldPersistence.unlock_chests(get_tree(), unlocked)
+
+
+## Big chests whose guardian has been beaten but which are still shut.
+func unlocked_chests() -> PackedStringArray:
+	var names := PackedStringArray()
+	for dungeon in dungeons:
+		if dungeon.big_chest != null and not dungeon.big_chest.locked and not dungeon.big_chest.is_open:
+			names.append(String(dungeon.big_chest.name))
+	return names
+
+
+## Host: someone has just appeared whose hero this world remembers. Sent once the roster that
+## brings them has gone out, so the other machines have built the body it is addressed to.
+func _broadcast_restore(pid: int, state: Dictionary) -> void:
+	if not is_inside_tree():
+		return
+	if NetworkManager.is_networked():
+		_net_restore_player.rpc(pid, state)
+	_net_restore_player(pid, state)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _net_restore_player(pid: int, state: Dictionary) -> void:
+	var body := PlayerRegistry.body_of(pid) as PlayerCharacter
+	if body == null:
+		_pending_restore[pid] = state
+		return
+	body.restore_state(state)
+
+
+## Every dungeon scene, instanced on every machine and placed off the edge of the map.
+func _build_dungeons() -> void:
+	var root := Node3D.new()
+	root.name = "Dungeons"
+	add_child(root)
+	for index in Dungeon.IDS.size():
+		var id := Dungeon.IDS[index]
+		var packed := load(Dungeon.scene_path(id)) as PackedScene
+		if packed == null:
+			push_warning("No dungeon scene for %s" % id)
+			continue
+		var dungeon := packed.instantiate() as Dungeon
+		if dungeon == null:
+			push_warning("%s is not a Dungeon scene" % Dungeon.scene_path(id))
+			continue
+		dungeon.dungeon_id = id
+		root.add_child(dungeon)
+		dungeon.build(index)
+		dungeons.append(dungeon)
+
+
+## World position of the foot of the mountain's road up, on the rim walkway.
 func ascent_foot() -> Vector3:
 	var mountain := chunk_of_biome(&"mountain")
 	if mountain == null:
 		return Vector3.ZERO
 	var side: int = WorldGenerator.context(tiers, mountain.index)["ascent_side"]
-	var tile := WorldGenerator._from_side(WorldGenerator.CHUNK_TILES, side,
-			WorldGenerator.BORDER - 2, WorldGenerator.CHUNK_TILES / 2)
+	var foot := WorldGenerator.ascent_foot_tile(side, WorldGenerator.CHUNK_TILES)
+	var tile := WorldGenerator._from_side(WorldGenerator.CHUNK_TILES, side, foot.z, foot.y)
 	return mountain.global_position + mountain._tile_centre(tile.x, tile.y)
 
 
@@ -92,6 +375,55 @@ func ascent_direction() -> Vector3:
 		return Vector3.FORWARD
 	var side: int = WorldGenerator.context(tiers, mountain.index)["ascent_side"]
 	return -Vector3(ChunkMesher.NEIGHBOUR_DX[side], 0.0, ChunkMesher.NEIGHBOUR_DZ[side])
+
+
+## Draws the chunk each local player stands in and the eight round it, and the mountain; the
+## rest of the map is not drawn at all. A chunk is 128 m across, further than the camera sees
+## on the ground, so the next ring out is never in view -- except the mountain, which stands
+## tall enough to be seen from anywhere and is the thing everyone is heading for.
+## Only drawing: everything in a hidden chunk keeps running, and its skeletons stay drawn (they
+## can follow a player out of it).
+func _update_drawn_chunks() -> void:
+	var wanted := {}
+	var mountain := layout.find(&"mountain")
+	if mountain >= 0:
+		wanted[mountain] = true
+	var anyone := false
+	for pid in PlayerRegistry.local_pids():
+		var body := PlayerRegistry.body_of(pid) as Node3D
+		if body == null:
+			continue
+		anyone = true
+		var cell := Vector2i((Vector2(body.global_position.x, body.global_position.z)
+				/ WorldGenerator.CHUNK_SIZE).floor())
+		for dz in range(-1, 2):
+			for dx in range(-1, 2):
+				var at := cell + Vector2i(dx, dz)
+				if at.x >= 0 and at.y >= 0 and at.x < WorldGenerator.GRID and at.y < WorldGenerator.GRID:
+					wanted[at.y * WorldGenerator.GRID + at.x] = true
+	for index in chunks.size():
+		var on := draw_all or not anyone or wanted.has(index)
+		if _drawn.get(index, not on) != on:
+			_drawn[index] = on
+			chunks[index].set_drawn(on)
+	## A dungeon is drawn, lights and all, only while someone here is down in it.
+	for dungeon in dungeons:
+		var inside := draw_all
+		for pid in PlayerRegistry.local_pids():
+			var body := PlayerRegistry.body_of(pid) as Node3D
+			if body != null and dungeon.bounds.has_point(body.global_position):
+				inside = true
+		if dungeon.visible != inside:
+			dungeon.visible = inside
+
+
+## How many chunks are being drawn right now.
+func drawn_chunk_count() -> int:
+	var count := 0
+	for index in chunks.size():
+		if _drawn.get(index, true):
+			count += 1
+	return count
 
 
 func chunk_of_biome(biome_id: StringName) -> Chunk:
@@ -132,6 +464,10 @@ func _on_dragon_defeated() -> void:
 	Achievements.grant(&"dragon_slain")
 	Achievements.evaluate()
 	SaveManager.save_game()
+	## A saved world remembers the kill; the dragon itself is back on the next load.
+	if GameState.world != null and NetworkManager.is_host():
+		GameState.world.dragons_slain += 1
+		save_progress()
 
 
 ## The party starts together in town: it is the only chunk with no monsters, and starting at the
@@ -184,6 +520,13 @@ func _spawn_player(pid: int) -> void:
 	player.reset_physics_interpolation()
 	player.configure(pid, archetype)
 	_add_player_sync(player)
+	if _pending_restore.has(pid):
+		player.restore_state(_pending_restore[pid])
+		_pending_restore.erase(pid)
+	elif NetworkManager.is_host():
+		var saved := WorldPersistence.character_for(GameState.world, archetype.id)
+		if not saved.is_empty():
+			_broadcast_restore.call_deferred(pid, saved)
 
 
 ## Position and facing are pushed by whichever peer owns the player. Built in code rather than
@@ -194,7 +537,10 @@ func _add_player_sync(player: PlayerCharacter) -> void:
 		return
 	var config := SceneReplicationConfig.new()
 	## `blocking` rides along because the host is the one that applies a block when a hit lands.
-	for property in [".:position", ".:rotation", ".:velocity", ".:blocking"]:
+	## `fidget` so a player left exercising is seen exercising everywhere.
+	## `charge_level` so everyone sees a charge building -- the tell before a spin or a flurry.
+	for property in [".:position", ".:rotation", ".:velocity", ".:blocking", ".:fidget",
+			".:charge_level"]:
 		config.add_property(NodePath(property))
 		config.property_set_replication_mode(NodePath(property),
 				SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -274,21 +620,6 @@ func _prewarm_effects() -> void:
 
 
 func _build_environment() -> void:
-	var sun := DirectionalLight3D.new()
-	sun.name = "Sun"
-	## Steep enough that the plateau cliffs cast readable shadows -- seeing the edge is what
-	## makes a ledge a hazard rather than a surprise.
-	sun.rotation_degrees = Vector3(-52.0, -38.0, 0.0)
-	sun.light_energy = 1.15
-	sun.light_color = Color(1.0, 0.96, 0.88)
-	sun.shadow_enabled = true
-	## Shadows only near the action. The default 100 m covers most of the visible map from a
-	## hilltop, and rendering the whole thing into the shadow atlas costs far more than the
-	## distant shadows are worth at this art scale.
-	sun.directional_shadow_max_distance = 70.0
-	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-	add_child(sun)
-
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_SKY
 	var sky := Sky.new()
@@ -299,8 +630,11 @@ func _build_environment() -> void:
 	sky_material.ground_horizon_color = Color(0.6, 0.62, 0.55)
 	sky.sky_material = sky_material
 	environment.sky = sky
-	environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	environment.ambient_light_energy = 0.6
+	sky.radiance_size = Sky.RADIANCE_SIZE_32
+	## A flat colour rather than the sky itself: it changes all day long, and reading it off the
+	## sky each time would mean working the sky's light out again.
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
 	## Distant chunks fade rather than popping at the far plane; the map is 256 m across and the
 	## camera can see a long way from the mountain.
 	environment.fog_enabled = true
@@ -319,3 +653,7 @@ func _build_environment() -> void:
 	world_environment.name = "WorldEnvironment"
 	world_environment.environment = environment
 	add_child(world_environment)
+
+	day_night = DayNight.new()
+	add_child(day_night)
+	day_night.setup(environment, sky_material)

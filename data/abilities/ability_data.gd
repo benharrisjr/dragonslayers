@@ -31,6 +31,13 @@ enum Shape {
 @export var arc_degrees: float = 60.0
 @export var radius: float = 3.0
 @export var projectile_speed: float = 22.0
+## How many projectiles one use fires. More than one fans them out evenly all the way round the
+## caster, starting from the aim: the thief's and the archer's charged flurries.
+@export var projectile_count: int = 1
+## Seconds between one projectile of a ring and the next. Zero lets them all go at once; more
+## looses them one by one as the caster spins round (the archer's volley), the spin taking
+## projectile_count * projectile_interval.
+@export var projectile_interval: float = 0.0
 
 @export_group("Effect")
 @export var damage: int = 1

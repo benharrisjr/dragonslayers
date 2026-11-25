@@ -72,13 +72,16 @@ func _process(delta: float) -> void:
 	if hit.is_empty():
 		return
 	var struck := hit["collider"] as Combatant
-	if struck != null and shooter.is_hostile_to(struck):
+	if struck != null and shooter.can_hit(struck):
 		## Land it where the ray actually met the body, so an explosion is centred on the impact
 		## rather than wherever the projectile happened to be at end of frame.
 		global_position = hit["position"]
 		_impact(struck)
 		return
 	## Anything else is scenery: a missed shot dies on the terrain instead of sailing off the map.
+	## A player's shot into a great tree finds the door in it.
+	if shooter is PlayerCharacter:
+		DungeonEntrance.struck(get_tree(), hit["position"], 0.5)
 	_finish()
 
 
@@ -101,15 +104,76 @@ func _finish() -> void:
 
 
 func _build_visual(color: Color) -> void:
+	match ability.id if ability != null else &"":
+		&"bow_shot", &"arrow_flurry":
+			_build_arrow()
+		&"knife_flurry":
+			_build_knife()
+		&"magic_bolt":
+			_build_orb(color)
+		_:
+			_add_box(Vector3(0.16, 0.16, 0.7), Vector3.ZERO, color, true)
+
+
+## A shaft with a pale head and fletching. -Z is forward: launch() points it with look_at.
+func _build_arrow() -> void:
+	_add_box(Vector3(0.05, 0.05, 0.9), Vector3.ZERO, Color(0.55, 0.38, 0.22), false)
+	_add_box(Vector3(0.1, 0.1, 0.16), Vector3(0, 0, -0.5), Color(0.85, 0.87, 0.92), false)
+	_add_box(Vector3(0.16, 0.02, 0.18), Vector3(0, 0, 0.4), Color(0.9, 0.9, 0.85), false)
+	_add_box(Vector3(0.02, 0.16, 0.18), Vector3(0, 0, 0.4), Color(0.9, 0.9, 0.85), false)
+
+
+## A thrown knife: a pale blade, a dark grip and a small guard. -Z is forward.
+func _build_knife() -> void:
+	_add_box(Vector3(0.07, 0.02, 0.38), Vector3(0, 0, -0.12), Color(0.86, 0.88, 0.93), false)
+	_add_box(Vector3(0.16, 0.04, 0.04), Vector3(0, 0, 0.08), Color(0.8, 0.65, 0.3), false)
+	_add_box(Vector3(0.05, 0.05, 0.16), Vector3(0, 0, 0.18), Color(0.3, 0.2, 0.15), false)
+
+
+## A bright core in a softer glow, with a light so it brightens what it flies past.
+func _build_orb(color: Color) -> void:
+	var core := SphereMesh.new()
+	core.radius = 0.16
+	core.height = 0.32
+	core.material = _glow(Color(0.92, 0.94, 1.0), 1.0, 3.0)
+	var glow := SphereMesh.new()
+	glow.radius = 0.32
+	glow.height = 0.64
+	glow.material = _glow(color, 0.45, 2.0)
+	for mesh: Mesh in [core, glow]:
+		var instance := MeshInstance3D.new()
+		instance.mesh = mesh
+		instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(instance)
+	var light := OmniLight3D.new()
+	light.light_color = color
+	light.light_energy = 1.6
+	light.omni_range = 3.5
+	add_child(light)
+
+
+func _add_box(box_size: Vector3, offset: Vector3, color: Color, glowing: bool) -> void:
 	var mesh := BoxMesh.new()
-	mesh.size = Vector3(0.16, 0.16, 0.7)
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.emission_enabled = true
-	material.emission = color
-	material.emission_energy_multiplier = 2.0
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mesh.material = material
+	mesh.size = box_size
+	if glowing:
+		mesh.material = _glow(color, 1.0, 2.0)
+	else:
+		var material := StandardMaterial3D.new()
+		material.albedo_color = color
+		mesh.material = material
 	var instance := MeshInstance3D.new()
 	instance.mesh = mesh
+	instance.position = offset
 	add_child(instance)
+
+
+func _glow(color: Color, alpha: float, energy: float) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(color, alpha)
+	material.emission_enabled = true
+	material.emission = color
+	material.emission_energy_multiplier = energy
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	if alpha < 1.0:
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	return material

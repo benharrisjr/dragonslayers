@@ -12,9 +12,6 @@ const MOUSE_SLOT := 0
 ## False while a menu is open over the match. The world keeps running (it has to, online), so
 ## the players simply stop reading their controls rather than the tree being paused.
 static var enabled: bool = true
-## True while Space + right mouse button is turning the camera. The right button is also the
-## equipped usable, so that one hotkey stays quiet for the mouse's player until the drag ends.
-static var mouse_looking: bool = false
 
 var slot: int = 0
 
@@ -44,28 +41,27 @@ func jump_held() -> bool:
 
 ## The three gear hotkeys, 0-based.
 func item_pressed(hotkey: int) -> bool:
-	return enabled and not _taken_by_look(hotkey) \
-			and Input.is_action_just_pressed("%sitem_%d" % [_prefix, hotkey + 1])
+	return enabled and Input.is_action_just_pressed("%sitem_%d" % [_prefix, hotkey + 1])
 
 
 func item_held(hotkey: int) -> bool:
-	return enabled and not _taken_by_look(hotkey) \
-			and Input.is_action_pressed("%sitem_%d" % [_prefix, hotkey + 1])
-
-
-func _taken_by_look(hotkey: int) -> bool:
-	return mouse_looking and hotkey == ItemDB.SLOT_USABLE and uses_mouse()
+	return enabled and Input.is_action_pressed("%sitem_%d" % [_prefix, hotkey + 1])
 
 
 func dash_pressed() -> bool:
 	return enabled and Input.is_action_just_pressed(_prefix + "dash")
 
 
+func dash_held() -> bool:
+	return enabled and Input.is_action_pressed(_prefix + "dash")
+
+
 func inventory_pressed() -> bool:
 	return enabled and Input.is_action_just_pressed(_prefix + "inventory")
 
 
-## Held to turn the right stick (or Q and E) from the camera over to the gear wheel.
+## Held to turn the right stick (or the keyboard's camera keys) from the camera over to the gear
+## wheel.
 func wheel_held() -> bool:
 	return enabled and Input.is_action_pressed(_prefix + "wheel")
 
@@ -77,6 +73,17 @@ func menu_step() -> int:
 	if Input.is_action_just_pressed(_prefix + "left"):
 		return -1
 	if Input.is_action_just_pressed(_prefix + "right"):
+		return 1
+	return 0
+
+
+## Up or down through a menu laid out in rows: -1 up, 1 down.
+func menu_step_vertical() -> int:
+	if not enabled:
+		return 0
+	if Input.is_action_just_pressed(_prefix + "up"):
+		return -1
+	if Input.is_action_just_pressed(_prefix + "down"):
 		return 1
 	return 0
 
@@ -117,14 +124,17 @@ func wheel_vector() -> Vector2:
 			_prefix + "wheel_up", _prefix + "wheel_down")
 
 
-## One slice round the wheel, for the keyboard's Q and E. Only keys count: the stick, which is
-## also bound to the camera actions, points instead.
+## One slice round the wheel, for the keyboard: Q and E (the item buttons, which do nothing else
+## while the wheel is open), or Z and C (the camera keys). Not while the stick is pointing: the
+## stick, which is also bound to the camera actions, points instead.
 func wheel_step() -> int:
 	if not enabled or wheel_vector() != Vector2.ZERO:
 		return 0
-	if Input.is_action_just_pressed(_prefix + "cam_left"):
+	if Input.is_action_just_pressed(_prefix + "cam_left") \
+			or Input.is_action_just_pressed(_prefix + "item_2"):
 		return -1
-	if Input.is_action_just_pressed(_prefix + "cam_right"):
+	if Input.is_action_just_pressed(_prefix + "cam_right") \
+			or Input.is_action_just_pressed(_prefix + "item_3"):
 		return 1
 	return 0
 

@@ -7,14 +7,14 @@ extends Control
 ## controls, so opening it stops nobody else. The world does not pause either -- looking at
 ## your gear in the middle of a fight is a choice with a cost.
 ##
-## Two sections. Usable equipment (hookshot, lantern, power glove, bug net, fan) shares one button, so one of them is
+## Two sections. Usable equipment (hookshot, boomerang, lantern, power glove, bug net, fan) shares one button, so one of them is
 ## equipped at a time: move to it and press any action button. Static equipment (boots,
 ## feather) just works while it is held and has nothing to choose. The sword and shield are not
 ## here at all: they are always on their own buttons, and the HUD shows them.
 ##
 ## Stick left and right moves along the items, through both sections. Select closes it again.
 
-const CELL_SIZE := Vector2(88, 100)
+const CELL_SIZE := Vector2(88, 92)
 const GOLD := Color(1.0, 0.9, 0.6)
 
 var player: PlayerCharacter
@@ -90,15 +90,16 @@ func _build() -> void:
 	add_child(centre)
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 10)
+	column.add_theme_constant_override("separation", 6)
 	column.alignment = BoxContainer.ALIGNMENT_CENTER
 	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	centre.add_child(column)
 
 	column.add_child(_label("Gear", 26, GOLD))
 
-	var sections := HBoxContainer.new()
-	sections.add_theme_constant_override("separation", 22)
+	## One above the other: side by side, nine cells are wider than a quarter-screen pane.
+	var sections := VBoxContainer.new()
+	sections.add_theme_constant_override("separation", 8)
 	sections.alignment = BoxContainer.ALIGNMENT_CENTER
 	sections.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(sections)
@@ -106,6 +107,8 @@ func _build() -> void:
 	_build_section(sections, "Static equipment", ItemDB.STATIC)
 
 	_detail = _label("", 15, Color(0.9, 0.93, 0.9))
+	_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_detail.custom_minimum_size = Vector2(ItemDB.USABLE.size() * (CELL_SIZE.x + 8.0), 0.0)
 	column.add_child(_detail)
 	_hint = _label("", 12, Color(0.65, 0.7, 0.7))
 	column.add_child(_hint)

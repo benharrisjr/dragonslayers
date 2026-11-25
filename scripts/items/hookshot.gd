@@ -6,7 +6,8 @@ extends Node3D
 ## It flies a set distance from the player who fired it. If it strikes something that does not
 ## move -- a wall, a tree, a rock, a chest -- it bites, and the player is pulled to it. If it
 ## strikes something that does -- a monster, another player -- that is pulled to the player
-## instead. If it strikes nothing it comes back.
+## instead. If it strikes loot lying on the ground -- coins, hearts, gear -- it reels that in.
+## If it strikes nothing it comes back.
 ##
 ## One of these exists on every peer, launched from identical parameters, so the line looks the
 ## same everywhere. Only the copy on the machine that owns the player tests for collisions; what
@@ -113,6 +114,15 @@ func _strike(step: float) -> bool:
 	var space := get_world_3d().direct_space_state
 	if space == null:
 		return false
+	## Loot lying in the hook's path: it bites that and reels it in. Checked along the stretch
+	## in a few points, since at 42 m/s one frame's flight is longer than a pickup is wide.
+	for sample in 3:
+		var point := head + direction * step * (sample + 1) / 3.0
+		var found := Pickup.near(get_tree(), point)
+		if not found.is_empty():
+			head = found[0].global_position
+			owner_player.hook_struck_pickup(found[0])
+			return true
 	var query := PhysicsRayQueryParameters3D.create(head, head + direction * step)
 	query.collision_mask = Combatant.LAYER_WORLD | Combatant.LAYER_COMBATANT \
 			| Combatant.LAYER_SCENERY

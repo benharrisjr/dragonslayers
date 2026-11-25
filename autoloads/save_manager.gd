@@ -162,6 +162,91 @@ func load_game(slot: int = current_slot) -> void:
 	save_loaded.emit()
 
 
+# --- Worlds ------------------------------------------------------------------------
+# Saved worlds (WorldSave) live beside the slots in their own folder, one file each, and go
+# through the same never-lose-one writes and repairs. Any number of them; the lobby's world
+# page lists them.
+
+const WORLD_DIR := "worlds/"
+## Saves the world in play; set by GameWorld while a saved world is up, so quitting the game
+## outright still writes it.
+var world_flush: Callable = Callable()
+
+
+func world_path(id: int) -> String:
+	return save_root + WORLD_DIR + "world_%d.tres" % id
+
+
+## Every saved world, most recently played first.
+func list_worlds() -> Array[WorldSave]:
+	var worlds: Array[WorldSave] = []
+	var dir := DirAccess.open(save_root + WORLD_DIR)
+	if dir == null:
+		return worlds
+	var ids: Array[int] = []
+	for file in dir.get_files():
+		## world_<id>.tres, or only its backup if a write was interrupted.
+		var found := RegEx.create_from_string("^world_(\\d+)(\\.bak)?\\.tres$").search(file)
+		if found != null and not ids.has(int(found.get_string(1))):
+			ids.append(int(found.get_string(1)))
+	for id in ids:
+		var world := load_world(id)
+		if world != null:
+			worlds.append(world)
+	worlds.sort_custom(func(a: WorldSave, b: WorldSave) -> bool:
+		return a.last_played_unix > b.last_played_unix)
+	return worlds
+
+
+func load_world(id: int) -> WorldSave:
+	var world := _read_save_file(world_path(id)) as WorldSave
+	if world != null:
+		world.id = id
+	return world
+
+
+func save_world(world: WorldSave) -> void:
+	if world == null:
+		return
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(save_root + WORLD_DIR))
+	world.last_played_unix = int(Time.get_unix_time_from_system())
+	_write_save_file(world, world_path(world.id))
+
+
+## File and backup both, or the backup would bring it straight back.
+func delete_world(id: int) -> void:
+	var path := world_path(id)
+	for p in [path, _backup_path(path)]:
+		if FileAccess.file_exists(p):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
+
+
+## A fresh world with its own seed, written straight away so it is in the list. Named for
+## the first free number, so deleting World 2 lets the next new one be World 2 again.
+func new_world(world_seed: int = 0) -> WorldSave:
+	var taken_ids: Array[int] = []
+	var taken_names: Array[String] = []
+	for existing in list_worlds():
+		taken_ids.append(existing.id)
+		taken_names.append(existing.name)
+	var world := WorldSave.new()
+	## Container defaults are shared between Resource instances; re-bind them (see new_game).
+	world.opened_chests = PackedStringArray()
+	world.loose_gear = []
+	world.characters = {}
+	world.id = 1
+	while taken_ids.has(world.id):
+		world.id += 1
+	var number := 1
+	while taken_names.has("World %d" % number):
+		number += 1
+	world.name = "World %d" % number
+	world.world_seed = world_seed if world_seed != 0 else GameState.roll_seed()
+	world.created_unix = int(Time.get_unix_time_from_system())
+	save_world(world)
+	return world
+
+
 ## Bring a save written by an older build up to SaveData.CURRENT_VERSION. Add one
 ## `if save.version < N:` block per version bump, oldest first.
 func _migrate(save: SaveData) -> void:
@@ -252,6 +337,9 @@ func apply_pad_layout() -> void:
 
 ## Write everything dirty to user://. Two small .tres files, safe to repeat.
 func flush_to_disk() -> void:
+	## The saved world being played, if any (GameWorld.save_progress, set while one is up).
+	if world_flush.is_valid():
+		world_flush.call()
 	if save_data != null:
 		save_game()
 	save_global_config()
@@ -415,7 +503,9 @@ func _pick_save_root() -> void:
 	save_root = "user://"
 	if OS.get_environment(REAL_SAVES_ENV) == "1":
 		return
-	var sandbox := DisplayServer.get_name() == "headless"
+	## `-- --sandbox` puts a windowed run there too: screenshots and hand tests that make saves.
+	var sandbox := DisplayServer.get_name() == "headless" \
+			or OS.get_cmdline_user_args().has("--sandbox")
 	for arg in OS.get_cmdline_args():
 		if not arg.ends_with(".tscn"):
 			continue

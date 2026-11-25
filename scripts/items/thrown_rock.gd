@@ -1,14 +1,15 @@
 class_name ThrownRock
 extends Node3D
 
-## A rock in the air, thrown by a power glove, and the pieces it breaks into.
+## A rock in the air, thrown by a power glove, and the pieces it breaks into -- or a crate, which
+## anyone can throw, and which breaks open where it lands.
 ##
 ## Like a projectile, one of these flies on every peer from the same origin and velocity, so it
 ## looks the same everywhere. Each copy shatters where it lands on its own machine; only the
 ## host's copy hurts anything. Whatever it lands on or beside -- monster, dragon or another
 ## player -- takes the hit and is thrown back. The one who threw it is spared.
 
-const DAMAGE := 6
+const DAMAGE := 1
 const KNOCKBACK := 17.0
 const KNOCKBACK_LIFT := 0.45
 ## How far from the point of impact a body is still caught, beyond its own width.
@@ -73,6 +74,8 @@ func _shatter(at: Vector3) -> void:
 	_done = true
 	GameSfx.play_at(&"rock_shatter", at)
 	_spawn_shards(at)
+	GrassField.cut_all(get_tree(), at, SPLASH)
+	LeafField.kick_all(get_tree(), at, SPLASH + 0.5, Vector3.ZERO, 6.0)
 	if NetworkManager.is_host():
 		for node in get_tree().get_nodes_in_group("combatants"):
 			var body := node as Combatant
@@ -80,6 +83,12 @@ func _shatter(at: Vector3) -> void:
 				continue
 			if body.hit_centre().distance_to(at) <= SPLASH + body.hit_radius + body.hit_height * 0.5:
 				body.take_damage(DAMAGE, at, KNOCKBACK, KNOCKBACK_LIFT)
+		DungeonEntrance.struck(get_tree(), at, SPLASH)
+		## A thrown crate breaks open where it lands.
+		if _rock != null and _rock.has_meta("crate"):
+			var area := LootArea.at_point(get_tree(), at)
+			if area != null:
+				area.spawn_crate_loot(at + Vector3.UP * 0.5)
 	queue_free()
 
 

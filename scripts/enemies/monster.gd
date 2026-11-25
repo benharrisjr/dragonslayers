@@ -37,6 +37,7 @@ var _attack: AbilityData
 var _repath: float = 0.0
 ## Seconds left unable to act. Counted on the host, which is the only machine that thinks.
 var _stun_left: float = 0.0
+var _river_check: float = 0.0
 ## Staggered so 40-odd skeletons do not all run their distance check on the same frame, which
 ## would turn a cheap test into a periodic spike -- exactly the stutter it is meant to remove.
 var _cull_timer: float = randf() * Culling.CHECK_INTERVAL
@@ -107,6 +108,17 @@ func _physics_process(delta: float) -> void:
 	## Shoved into a pit. Without this it falls forever: invisible, unkillable, and still on the
 	## books as a live monster. It dies where it stood instead, so the party is still paid for
 	## the kill -- knocking things off ledges is the intended way to fight, not an exploit.
+	## Into the river, the lake's deep middle or the open sea: a skeleton cannot swim. It drowns
+	## where it went in, and still pays out.
+	_river_check -= delta
+	if _river_check <= 0.0 and not is_dead and NetworkManager.is_host():
+		_river_check = 0.3
+		var river := Chunk.water_under(get_tree(), global_position)
+		if not river.is_empty() and not river["bridge"] \
+				and global_position.y < float(river["bank"]) - 0.5:
+			GameSfx.play_at(&"splash", global_position)
+			take_damage(max_health * 2, global_position + Vector3.UP, 0.0, 0.0)
+			return
 	if global_position.y < KILL_HEIGHT and not is_dead and NetworkManager.is_host():
 		global_position = last_grounded_position
 		reset_physics_interpolation()
@@ -287,19 +299,7 @@ func is_stunned() -> bool:
 func _net_show_stun(seconds: float) -> void:
 	if visual != null:
 		visual.play_action(data.hit_anim, 1.5)
-	var ring := TorusMesh.new()
-	ring.inner_radius = 0.28
-	ring.outer_radius = 0.38
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(1.0, 0.9, 0.25)
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var halo := MeshInstance3D.new()
-	halo.mesh = ring
-	halo.material_override = material
-	halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	halo.position.y = hit_height + 0.35
-	add_child(halo)
-	get_tree().create_timer(seconds).timeout.connect(halo.queue_free)
+	show_stun_ring(seconds)
 
 
 func _pick_target() -> Combatant:

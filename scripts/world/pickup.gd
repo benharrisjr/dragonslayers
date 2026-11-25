@@ -1,7 +1,8 @@
 class_name Pickup
 extends Node3D
 
-## A coin, a heart or a piece of gear lying on the ground waiting to be walked into.
+## A gem, a heart or a piece of gear lying on the ground waiting to be walked into. Money is gems
+## (Gem): a green one is worth 1, red 2, blue 5, purple 10 and a diamond 25.
 ##
 ## Only the host decides a pickup was collected, then tells everyone to remove it. Letting each
 ## client claim locally would pay a four-player party four times for one coin.
@@ -29,6 +30,13 @@ var _check_timer: float = 0.0
 var _base_height: float = 0.0
 var _time: float = 0.0
 var _collected: bool = false
+## While a boomerang or hookshot is bringing this back: whose it is, and which of the two
+## (&"boomerang" or &"hook"). It rides along on that player's copy of the tool on every peer,
+## and is collected the usual way -- the host seeing it come within reach of someone.
+var _carrier: PlayerCharacter
+var _carrier_tool: StringName = &""
+## How close a passing boomerang or hook has to come to snatch it.
+const SNATCH_RADIUS := 1.0
 
 
 func setup(pickup_kind: Kind, value: int, position: Vector3) -> void:
@@ -48,8 +56,11 @@ func _process(delta: float) -> void:
 	if _collected:
 		return
 	_time += delta
-	position.y = _base_height + sin(_time * 3.0) * BOB_HEIGHT + BOB_HEIGHT
-	rotation.y += delta * 1.8
+	if _carrier_tool != &"":
+		_follow_carrier()
+	else:
+		position.y = _base_height + sin(_time * 3.0) * BOB_HEIGHT + BOB_HEIGHT
+	rotation.y += delta * (2.6 if kind == Kind.GOLD and amount >= Gem.VALUES[0] else 1.8)
 
 	## Gear never expires: a feather that vanished after ninety seconds would strand the party.
 	if _time > LIFETIME and kind != Kind.ITEM:
@@ -99,6 +110,71 @@ func _net_collected(player_path: NodePath) -> void:
 	queue_free()
 
 
+func is_carried() -> bool:
+	return _carrier_tool != &""
+
+
+## Host: a boomerang or hookshot of `player`'s has caught this and is bringing it back.
+func start_carry(player: PlayerCharacter, tool: StringName) -> void:
+	if not NetworkManager.is_host() or _collected or is_carried() or player == null:
+		return
+	if NetworkManager.is_networked():
+		_net_carry.rpc(player.get_path(), tool)
+	else:
+		_net_carry(player.get_path(), tool)
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_carry(player_path: NodePath, tool: StringName) -> void:
+	var player := get_node_or_null(player_path) as PlayerCharacter
+	if player == null:
+		return
+	_carrier = player
+	_carrier_tool = tool
+	_follow_carrier()
+
+
+## Rides on the tool while it is out; once it is back in hand (or gone) the pickup is set down
+## just in front of its owner -- where, if they can take it, the host's next check has them
+## collect it, and if they cannot (a second feather) it waits there for a friend.
+func _follow_carrier() -> void:
+	var player := _carrier if is_instance_valid(_carrier) else null
+	var at := Vector3.INF
+	if player != null:
+		match _carrier_tool:
+			&"boomerang":
+				if player.boomerang != null and is_instance_valid(player.boomerang):
+					at = player.boomerang.global_position - Vector3.UP * 0.4
+			&"hook":
+				if player.hook != null and is_instance_valid(player.hook) \
+						and player.hook.state == Hookshot.State.RETURNING:
+					at = player.hook.head - Vector3.UP * 0.2
+	if at != Vector3.INF:
+		global_position = at
+		return
+	_carrier_tool = &""
+	_carrier = null
+	if player != null and not player.is_dead:
+		var ahead := player.facing() * 0.9
+		global_position = Vector3(player.global_position.x + ahead.x, player.global_position.y,
+				player.global_position.z + ahead.z)
+	_base_height = global_position.y
+	## A pickup with somewhere to go should not time out on the way: it gets a fresh lifetime.
+	_time = 0.0
+
+
+## Every loose pickup within SNATCH_RADIUS of `point` not already on its way somewhere.
+static func near(tree: SceneTree, point: Vector3, radius: float = SNATCH_RADIUS) -> Array[Pickup]:
+	var out: Array[Pickup] = []
+	for node in tree.get_nodes_in_group("pickups"):
+		var pickup := node as Pickup
+		if pickup == null or pickup._collected or pickup.is_carried():
+			continue
+		if pickup.global_position.distance_to(point) <= radius:
+			out.append(pickup)
+	return out
+
+
 func item_id() -> StringName:
 	return ItemDB.ORDER[amount] if kind == Kind.ITEM and amount >= 0 \
 			and amount < ItemDB.ORDER.size() else &""
@@ -133,33 +209,22 @@ func _build_visual() -> void:
 		halo.position.y = -0.35
 		add_child(halo)
 		return
-	var mesh: Mesh
-	var color: Color
 	if kind == Kind.GOLD:
-		var coin := CylinderMesh.new()
-		coin.top_radius = 0.3
-		coin.bottom_radius = 0.3
-		coin.height = 0.08
-		coin.radial_segments = 8  ## Faceted on purpose, to sit alongside the low-poly kits.
-		mesh = coin
-		color = Color(1.0, 0.82, 0.25)
-	else:
-		var heart := SphereMesh.new()
-		heart.radius = 0.28
-		heart.height = 0.56
-		heart.radial_segments = 8
-		heart.rings = 4
-		mesh = heart
-		color = Color(0.95, 0.25, 0.35)
-
+		var gem := Gem.build(amount)
+		add_child(gem)
+		return
+	var heart := SphereMesh.new()
+	heart.radius = 0.28
+	heart.height = 0.56
+	heart.radial_segments = 8
+	heart.rings = 4
+	var color := Color(0.95, 0.25, 0.35)
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	material.emission_enabled = true
 	material.emission = color
 	material.emission_energy_multiplier = 0.9
-	mesh.material = material
-
+	heart.material = material
 	var instance := MeshInstance3D.new()
-	instance.mesh = mesh
-	instance.rotation_degrees.x = 90.0 if kind == Kind.GOLD else 0.0
+	instance.mesh = heart
 	add_child(instance)

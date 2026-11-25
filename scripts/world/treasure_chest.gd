@@ -20,8 +20,12 @@ var gold_value: int = 20
 ## The piece of gear inside, or &"" for a chest that only holds gold.
 var item_id: StringName = &""
 var is_open: bool = false
+## A dungeon's big chest stays locked until its guardian is beaten (Dungeon). Opened chests are
+## never locked.
+var locked: bool = false
 
 var _lid: Node3D
+var _padlock: Node3D
 var _prompt: Node3D
 
 
@@ -44,6 +48,9 @@ func setup(large: bool, value: int) -> void:
 func try_open(player: PlayerCharacter) -> bool:
 	if is_open or player == null:
 		return false
+	if locked:
+		GameSfx.play_at(&"door", global_position)
+		return false
 	if player.global_position.distance_to(global_position) > INTERACT_RADIUS:
 		return false
 	if not NetworkManager.is_host():
@@ -55,7 +62,7 @@ func try_open(player: PlayerCharacter) -> bool:
 
 @rpc("any_peer", "call_local", "reliable")
 func _request_open() -> void:
-	if not NetworkManager.is_host() or is_open:
+	if not NetworkManager.is_host() or is_open or locked:
 		return
 	if NetworkManager.is_networked():
 		_net_open.rpc()
@@ -76,6 +83,75 @@ func _net_open() -> void:
 	if _prompt != null:
 		_prompt.visible = false
 	opened.emit(self)
+
+
+## Already opened in an earlier session of a saved world (or before someone joined): shown open,
+## with nothing spilling out -- `opened` is not emitted, so no loot is spawned again.
+func set_open_quietly() -> void:
+	if is_open:
+		return
+	unlock_quietly()
+	is_open = true
+	if _lid != null:
+		_lid.rotation_degrees.x = -100.0
+	if _prompt != null:
+		_prompt.visible = false
+
+
+## Locks it, with a padlock on the front to show it. Every peer, at build time.
+func lock() -> void:
+	if locked or is_open:
+		return
+	locked = true
+	_padlock = Node3D.new()
+	_padlock.name = "Padlock"
+	var body := BoxMesh.new()
+	body.size = Vector3(0.5, 0.45, 0.2)
+	var shackle := TorusMesh.new()
+	shackle.inner_radius = 0.12
+	shackle.outer_radius = 0.18
+	var gold := StandardMaterial3D.new()
+	gold.albedo_color = Color(0.95, 0.75, 0.25)
+	gold.metallic = 0.6
+	gold.roughness = 0.35
+	body.material = gold
+	shackle.material = gold
+	var block := MeshInstance3D.new()
+	block.mesh = body
+	_padlock.add_child(block)
+	var loop := MeshInstance3D.new()
+	loop.mesh = shackle
+	loop.rotation_degrees.x = 90.0
+	loop.position.y = 0.28
+	_padlock.add_child(loop)
+	_padlock.position = Vector3(0.0, 0.55, 0.62) * SIZE * (1.4 if is_large else 1.0)
+	add_child(_padlock)
+
+
+## Host: takes the lock off, on every peer.
+func unlock() -> void:
+	if not locked or not NetworkManager.is_host():
+		return
+	if NetworkManager.is_networked():
+		_net_unlock.rpc()
+	else:
+		_net_unlock()
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_unlock() -> void:
+	if not locked:
+		return
+	unlock_quietly()
+	GameSfx.play_at(&"secret", global_position)
+
+
+## Unlocked without a fanfare: a saved world loading, or someone joining.
+func unlock_quietly() -> void:
+	locked = false
+	if _padlock != null:
+		_padlock.queue_free()
+		_padlock = null
 
 
 func _build_visual() -> void:
